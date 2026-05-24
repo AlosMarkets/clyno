@@ -1,0 +1,14 @@
+node_modules/
+dist/
+.env
+.env.*
+.DS_Store
+
+# Clino local memory
+.clino/sessions/
+.clino/index.db
+.clino/cache/
+
+# Logs
+*.log
+npm-debug.log*

@@ -1,0 +1,47 @@
+{
+  "name": "clino",
+  "version": "0.1.0",
+  "description": "Persistent memory for AI coding agents",
+  "main": "dist/index.js",
+  "type": "module",
+  "bin": {
+    "clino": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "ts-node src/index.ts",
+    "start": "node dist/index.js",
+    "test": "jest",
+    "lint": "eslint src --ext .ts",
+    "prepare": "npm run build"
+  },
+  "keywords": [
+    "ai",
+    "coding-agent",
+    "memory",
+    "context",
+    "codex",
+    "claude-code"
+  ],
+  "author": "Clino Contributors",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/jest": "^29.5.0",
+    "@types/node": "^20.0.0",
+    "@typescript-eslint/eslint-plugin": "^6.0.0",
+    "@typescript-eslint/parser": "^6.0.0",
+    "eslint": "^8.0.0",
+    "jest": "^29.0.0",
+    "ts-jest": "^29.0.0",
+    "ts-node": "^10.0.0",
+    "typescript": "^5.0.0"
+  },
+  "dependencies": {
+    "chokidar": "^3.5.0",
+    "commander": "^11.0.0",
+    "gray-matter": "^4.0.0",
+    "markdown-it": "^13.0.0",
+    "node-pty": "^1.1.0",
+    "sqlite3": "^5.1.0"
+  }
+}

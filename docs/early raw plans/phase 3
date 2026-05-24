@@ -1,0 +1,49 @@
+Great. Do not add GUI, embeddings, Electron, team sync, graph memory, or advanced features yet.
+
+Now harden the MVP into a reliable CLI.
+
+Priority 1: Fix package/module issues
+- Add "type": "module" to package.json if the build output is ESM
+- Ensure the CLI runs cleanly with no Node warnings
+- Ensure npm link / bin command works globally as `clino`
+
+Priority 2: Replace placeholder spawn with real node-pty
+- Use node-pty for `clino run <agent> [args...]`
+- Preserve interactive behavior, colors, prompts, and input
+- Continue saving raw transcript to `.clino/sessions/`
+- Make sure Ctrl+C, exit, and terminal resizing behave correctly
+
+Priority 3: Add a simple real-world test
+- Run: `clino run echo "we decided to use JWT auth and need to fix Redis blacklist bug"`
+- Then run: `clino summarize`
+- Then run: `clino find "JWT"`
+- Then run: `clino inject "auth"`
+- Confirm each command works end-to-end
+
+Priority 4: Improve memory quality
+- Save extracted items into separate files:
+  - `.clino/memory/decisions.md`
+  - `.clino/memory/todos.md`
+  - `.clino/memory/bugs.md`
+  - `.clino/memory/errors.md`
+  - `.clino/memory/summaries.md`
+- Every item should include frontmatter or metadata:
+  - date
+  - type
+  - source session
+  - confidence
+  - tags
+
+Priority 5: Add a token/character budget to inject
+- `clino inject <query> --max-chars 6000`
+- Default should be compact
+- Never dump the whole memory folder
+- Return only the most relevant chunks
+
+After that, show me:
+1. package.json
+2. src/index.ts
+3. one example session file
+4. one example memory file
+5. output of `clino find`
+6. output of `clino inject`
