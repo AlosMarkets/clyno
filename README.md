@@ -228,6 +228,17 @@ Extracted project memory lives in `.clino/memory`.
 
 Search indexes and cache files live locally.
 
+Storage is **project-local by default** so memory never leaks between unrelated
+projects. The Clino home directory is resolved in this order:
+
+1. `CLINO_HOME`, if set — used exactly as given.
+2. `<git-root>/.clino`, when run inside a Git repository (found by walking up for `.git`).
+3. `<cwd>/.clino` otherwise.
+
+All commands (`run`, `summarize`, `find`, `inject`) share this resolved home.
+`~/.clino` is no longer used for project memory; it may be reserved for global
+config later.
+
 ---
 
 ## Memory Types

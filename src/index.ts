@@ -2,8 +2,7 @@
 
 import { spawn } from 'node-pty';
 import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync } from 'node:fs';
-import { join } from 'node:path';
-import { homedir } from 'node:os';
+import { join, dirname } from 'node:path';
 
 import {
   extractSignals,
@@ -16,8 +15,43 @@ import {
   type MemoryType,
 } from './memory.js';
 
-// Configuration
-const CLINO_DIR = join(homedir(), '.clino');
+/**
+ * Walk up from `start` looking for a `.git` entry (a directory for a normal
+ * checkout, a file for a worktree/submodule). Returns the repository root, or
+ * null if none is found. This is a pure filesystem walk so it works even when
+ * the `git` binary is not installed.
+ */
+function findGitRoot(start: string): string | null {
+  let dir = start;
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    if (existsSync(join(dir, '.git'))) return dir;
+    const parent = dirname(dir);
+    if (parent === dir) return null; // reached the filesystem root
+    dir = parent;
+  }
+}
+
+/**
+ * Resolve the directory that holds all Clino state (sessions + memory).
+ *
+ * Resolution order:
+ *   1. CLINO_HOME env var, if set — used exactly as given.
+ *   2. <git-root>/.clino, when run inside a Git working tree.
+ *   3. <cwd>/.clino otherwise.
+ *
+ * Storage is project-local by default so memory never leaks between unrelated
+ * projects. ~/.clino (os.homedir) is intentionally no longer used for project
+ * memory; it may be reserved for global config in the future.
+ */
+function resolveClinoHome(): string {
+  if (process.env.CLINO_HOME) return process.env.CLINO_HOME;
+  const gitRoot = findGitRoot(process.cwd());
+  return join(gitRoot ?? process.cwd(), '.clino');
+}
+
+// Configuration. All commands read and write through this single resolved home.
+const CLINO_DIR = resolveClinoHome();
 const SESSIONS_DIR = join(CLINO_DIR, 'sessions');
 const MEMORY_DIR = join(CLINO_DIR, 'memory');
 const PROCESSED_SESSIONS_FILE = join(CLINO_DIR, 'processed.sessions');
@@ -47,56 +81,173 @@ const FILE_TITLES: Record<string, string> = {
 };
 
 /**
- * Run a command through PTY and capture session.
+ * Run a command through a real PTY, wiring it to the parent terminal so the
+ * child behaves exactly as if launched directly: colors, prompts, raw keystrokes
+ * (arrows, Ctrl+C), and window resizes all pass through. The full byte stream is
+ * captured for the session transcript. No Clino output is written while the child
+ * is running — a single summary line is printed only after it exits.
+ *
+ * Resolves with the child's exit code so the caller can mirror it.
  */
-async function runCommand(agentCmd: string, agentArgs: string[]): Promise<void> {
-  console.log(`🚀 Starting ${agentCmd} with args: ${agentArgs.join(' ')}`);
+function runCommand(agentCmd: string, agentArgs: string[]): Promise<number> {
+  return new Promise((resolve) => {
+    const stdin = process.stdin;
+    const stdout = process.stdout;
+    const interactive = Boolean(stdin.isTTY && stdout.isTTY);
+    const startedAt = new Date();
 
-  const ptyProcess = spawn(agentCmd, agentArgs, {
-    name: 'xterm-color',
-    cols: 80,
-    rows: 30,
-    cwd: process.env.HOME,
-    env: process.env,
-  }) as any;
-
-  let output = '';
-  ptyProcess.on('data', (data: string) => {
-    output += data;
-    process.stdout.write(data); // Forward to user (preserves colors)
-  });
-
-  ptyProcess.on('exit', async (exit: { exitCode: number; signal?: number | undefined }) => {
-    console.log(`\n📝 Session ended with code ${exit.exitCode}`);
-
-    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const sessionFile = join(SESSIONS_DIR, `${timestamp}.md`);
-
-    const sessionContent = `# Coding Agent Session\n\n**Agent:** ${agentCmd}\n**Arguments:** ${agentArgs.join(' ')}\n**Started:** ${new Date().toISOString()}\n**Ended:** ${new Date().toISOString()}\n\n## Transcript\n\n\`\`\`\n${output}\n\`\`\`\n`;
-
-    writeFileSync(sessionFile, sessionContent, 'utf8');
-    console.log(`💾 Session saved to: ${sessionFile}`);
-
-    if (!processedSessions.has(sessionFile)) {
-      extractInsights(sessionFile);
-      processedSessions.add(sessionFile);
-      writeFileSync(PROCESSED_SESSIONS_FILE, Array.from(processedSessions).join('\n'), 'utf8');
+    let ptyProcess;
+    try {
+      ptyProcess = spawn(agentCmd, agentArgs, {
+        name: process.env.TERM || 'xterm-256color',
+        cols: stdout.columns || 80,
+        rows: stdout.rows || 30,
+        cwd: process.cwd(),
+        env: process.env,
+      });
+    } catch (err) {
+      // Typically ENOENT: the command isn't on PATH. Mirror the shell's 127.
+      process.stderr.write(`clino: cannot run '${agentCmd}': ${(err as Error).message}\n`);
+      resolve(127);
+      return;
     }
-  });
 
-  ptyProcess.on('error', (err: Error) => {
-    console.error(`❌ PTY error: ${err.message}`);
-    process.exit(1);
-  });
+    let transcript = '';
+    let exited = false;
 
-  process.stdin.pipe(ptyProcess);
+    // Put our stdin into raw mode so keystrokes (including Ctrl+C, arrow keys,
+    // and pasted input) are delivered verbatim to the child's PTY rather than
+    // being line-buffered or interpreted by our own terminal.
+    const setRaw = (on: boolean) => {
+      if (interactive && typeof stdin.setRawMode === 'function') {
+        try {
+          stdin.setRawMode(on);
+        } catch {
+          /* not all TTYs support raw mode; degrade gracefully */
+        }
+      }
+    };
+
+    const restoreTerminal = () => {
+      setRaw(false);
+      stdin.removeListener('data', onStdinData);
+      stdout.removeListener('resize', onResize);
+      stdin.pause();
+    };
+
+    const onStdinData = (data: Buffer) => {
+      if (!exited) ptyProcess!.write(data.toString('utf8'));
+    };
+
+    // Keep the child's PTY the same size as our terminal so full-screen TUIs
+    // (claude, codex, vim, …) redraw correctly when the window changes.
+    const onResize = () => {
+      if (exited) return;
+      try {
+        ptyProcess!.resize(stdout.columns || 80, stdout.rows || 30);
+      } catch {
+        /* child may be mid-exit */
+      }
+    };
+
+    // Forward the child's output to our terminal and record it raw.
+    const dataDisposable = ptyProcess.onData((data: string) => {
+      transcript += data;
+      stdout.write(data);
+    });
+
+    setRaw(true);
+    stdin.resume();
+    stdin.on('data', onStdinData);
+    stdout.on('resize', onResize);
+
+    // Forward termination signals to the child. In raw mode Ctrl+C reaches the
+    // child as a byte (so these rarely fire), but this covers the non-TTY case
+    // and an outer SIGTERM/SIGHUP, e.g. the terminal window being closed.
+    const forwardSignal = (signal: string) => () => {
+      try {
+        if (!exited) ptyProcess!.kill(signal);
+      } catch {
+        /* already gone */
+      }
+    };
+    const sigint = forwardSignal('SIGINT');
+    const sigterm = forwardSignal('SIGTERM');
+    const sighup = forwardSignal('SIGHUP');
+    process.on('SIGINT', sigint);
+    process.on('SIGTERM', sigterm);
+    process.on('SIGHUP', sighup);
+
+    ptyProcess.onExit(({ exitCode, signal }) => {
+      exited = true;
+      dataDisposable.dispose();
+      restoreTerminal();
+      process.removeListener('SIGINT', sigint);
+      process.removeListener('SIGTERM', sigterm);
+      process.removeListener('SIGHUP', sighup);
+
+      // node-pty reports exitCode 0 with a non-zero `signal` for signal-killed
+      // children, so a signal takes precedence and maps to the shell's 128+N
+      // (e.g. Ctrl+C → SIGINT → 130).
+      const code = signal ? 128 + signal : exitCode ?? 0;
+      finalizeSession(agentCmd, agentArgs, startedAt, transcript, code, signal);
+      resolve(code);
+    });
+  });
+}
+
+/**
+ * Persist the raw transcript and run insight extraction. Called only after the
+ * child has exited and the terminal has been restored, so its output is safe.
+ */
+function finalizeSession(
+  agentCmd: string,
+  agentArgs: string[],
+  startedAt: Date,
+  transcript: string,
+  exitCode: number,
+  signal?: number,
+): void {
+  const endedAt = new Date();
+  const timestamp = startedAt.toISOString().replace(/[:.]/g, '-');
+  const sessionFile = join(SESSIONS_DIR, `${timestamp}.md`);
+
+  const sessionContent =
+    `# Coding Agent Session\n\n` +
+    `**Agent:** ${agentCmd}\n` +
+    `**Arguments:** ${agentArgs.join(' ')}\n` +
+    `**Started:** ${startedAt.toISOString()}\n` +
+    `**Ended:** ${endedAt.toISOString()}\n` +
+    `**Exit code:** ${exitCode}${signal ? ` (signal ${signal})` : ''}\n\n` +
+    `## Transcript\n\n\`\`\`\n${transcript}\`\`\`\n`;
+
+  writeFileSync(sessionFile, sessionContent, 'utf8');
+
+  let counts = { decisions: 0, todos: 0, bugs: 0, errors: 0 };
+  if (!processedSessions.has(sessionFile)) {
+    counts = extractInsights(sessionFile, { quiet: true });
+    processedSessions.add(sessionFile);
+    writeFileSync(PROCESSED_SESSIONS_FILE, Array.from(processedSessions).join('\n'), 'utf8');
+  }
+
+  // The single, simple post-session message (requirement: nothing during run).
+  process.stdout.write(
+    `\n[clino] session saved → ${sessionFile}\n` +
+      `[clino] learned ${counts.decisions} decisions, ${counts.todos} todos, ` +
+      `${counts.bugs} bugs, ${counts.errors} errors\n`,
+  );
 }
 
 /**
  * Extract insights from a session file and persist them as clean memories.
+ * Returns the per-category counts. Pass `quiet` to suppress progress logging
+ * (used by `clino run`, which prints its own single post-session summary).
  */
-function extractInsights(sessionFilePath: string): void {
-  console.log('🔍 Extracting insights from session...');
+function extractInsights(
+  sessionFilePath: string,
+  opts: { quiet?: boolean } = {},
+): { decisions: number; todos: number; bugs: number; errors: number } {
+  if (!opts.quiet) console.log('🔍 Extracting insights from session...');
 
   const content = readFileSync(sessionFilePath, 'utf8');
   const signals = extractSignals(content);
@@ -107,10 +258,21 @@ function extractInsights(sessionFilePath: string): void {
   writeMemoryFile('errors.md', signals.errors, sessionFilePath);
   writeSummaryFile('summaries.md', synthesizeSummary(signals), sessionFilePath);
 
-  console.log(
-    `✅ Extracted: ${signals.decisions.length} decisions, ${signals.todos.length} TODOs, ` +
-      `${signals.bugs.length} bugs, ${signals.errors.length} errors`,
-  );
+  const counts = {
+    decisions: signals.decisions.length,
+    todos: signals.todos.length,
+    bugs: signals.bugs.length,
+    errors: signals.errors.length,
+  };
+
+  if (!opts.quiet) {
+    console.log(
+      `✅ Extracted: ${counts.decisions} decisions, ${counts.todos} TODOs, ` +
+        `${counts.bugs} bugs, ${counts.errors} errors`,
+    );
+  }
+
+  return counts;
 }
 
 /**
@@ -225,7 +387,9 @@ switch (command) {
       console.error('Usage: clino run <agent> [args...]');
       process.exit(1);
     }
-    runCommand(process.argv[3], process.argv.slice(4));
+    runCommand(process.argv[3], process.argv.slice(4)).then((code) => {
+      process.exit(code);
+    });
     break;
   }
 
