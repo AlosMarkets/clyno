@@ -228,6 +228,11 @@ Extracted project memory lives in `.clino/memory`.
 
 Search indexes and cache files live locally.
 
+`.clino/` is **ignored by Git by default** for privacy — transcripts, memory,
+indexes, and cache stay on your machine and are never committed. You can choose
+to export or curate-and-commit selected memory later (e.g. `git add -f` on a
+specific file), but that is an explicit, manual choice and not the MVP default.
+
 Storage is **project-local by default** so memory never leaks between unrelated
 projects. The Clino home directory is resolved in this order:
 
@@ -370,6 +375,8 @@ Clino is local-first.
 
 By default:
 
+* project memory is stored locally under the project `.clino/`
+* the entire `.clino/` directory is ignored by Git by default for privacy
 * transcripts stay on the user’s machine
 * memories stay on the user’s machine
 * indexes stay on the user’s machine
@@ -378,6 +385,11 @@ By default:
 * no telemetry is required
 
 Users should be able to inspect, edit, delete, and export their own memory.
+
+Sharing memory is opt-in: a project can manually export or commit curated
+memory files later, but committing memory is not the MVP default. (A convenience
+command such as `clino init --track-memory` may be added in the future; it does
+not exist today.)
 
 Cloud features, team sync, or sharing features should only exist as explicit opt-in features in the future.
 
