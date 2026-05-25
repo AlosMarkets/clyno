@@ -27,6 +27,7 @@ remove it later, run `npm unlink -g clino`.
 
 ```bash
 clino run claude       # run a coding agent through Clino and capture the session
+clino run --review codex
 clino status           # show where memory is stored and a quick health summary
 clino find "auth"      # search stored memory
 clino inject "auth"    # print compact, relevant context for a new session
@@ -209,6 +210,20 @@ Run another command through Clino:
 
 ```bash
 clino run codex
+```
+
+Memory write modes:
+
+- Default: save the transcript, extract memories, and write memory automatically.
+- `--review`: save the transcript and show reviewable candidates before writing memory.
+- `--no-memory`: save the transcript only and skip automatic extraction.
+
+Recommended dogfood flow:
+
+```bash
+clino run --review codex
+clino review latest
+clino review latest --accept all
 ```
 
 Show CLI help or version:

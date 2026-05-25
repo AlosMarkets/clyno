@@ -152,7 +152,7 @@ function nodePtyStatus(): { ok: boolean; message?: string } {
 const HELP_TEXT = `Clino — local memory for terminal coding agents
 
 Usage:
-  clino run <command> [args...]
+  clino run [--review|--no-memory] <command> [args...]
   clino inspect latest [--show-cleaned] [--max-chars <n>]
   clino inspect <session-file> [--show-cleaned] [--max-chars <n>]
   clino review latest [--accept all|<ids>] [--no-summary]
@@ -173,9 +173,15 @@ Flags:
   -h, --help       Show help
   -v, --version    Show version
 
+Run memory modes:
+  default        Save transcript, extract memories, write memory automatically
+  --review      Save transcript and show candidates without writing memory
+  --no-memory   Save transcript only, skipping extraction
+
 Examples:
   clino run claude
-  clino run codex
+  clino run --review claude
+  clino run --no-memory codex
   clino inspect latest
   clino review latest
   clino review latest --accept all
@@ -237,6 +243,73 @@ interface InsightCounts {
   resolved: number;
 }
 
+type RunMemoryMode = 'auto' | 'review' | 'none';
+
+interface ParsedRunArgs {
+  mode: RunMemoryMode;
+  command: string;
+  args: string[];
+}
+
+const RUN_USAGE = 'Usage: clino run [--review|--no-memory] <command> [args...]';
+
+function insightCountsFromReport(report: ExtractionReport): InsightCounts {
+  return {
+    decisions: report.counts.decisions,
+    todos: report.counts.todos,
+    bugs: report.counts.bugs,
+    errors: report.counts.errors,
+    resolved: report.counts.resolved,
+  };
+}
+
+function formatInsightCountsInline(counts: InsightCounts): string {
+  return `${counts.decisions} decisions, ${counts.todos} todos, ` +
+    `${counts.bugs} bugs, ${counts.errors} errors, ${counts.resolved} resolved`;
+}
+
+function parseRunArgs(args: string[]): ParsedRunArgs | null {
+  let review = false;
+  let noMemory = false;
+  let i = 0;
+
+  for (; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === '--review' || arg === '--review-memory') {
+      review = true;
+      continue;
+    }
+    if (arg === '--no-memory' || arg === '--no-extract') {
+      noMemory = true;
+      continue;
+    }
+    if (arg.startsWith('--')) {
+      console.error(`Unknown run option: ${arg}`);
+      console.error(RUN_USAGE);
+      return null;
+    }
+    break;
+  }
+
+  if (review && noMemory) {
+    console.error('Cannot combine --review and --no-memory.');
+    console.error(RUN_USAGE);
+    return null;
+  }
+
+  const command = args[i];
+  if (!command) {
+    console.error(RUN_USAGE);
+    return null;
+  }
+
+  return {
+    mode: review ? 'review' : noMemory ? 'none' : 'auto',
+    command,
+    args: args.slice(i + 1),
+  };
+}
+
 /**
  * Run a command through a real PTY, wiring it to the parent terminal so the
  * child behaves exactly as if launched directly: colors, prompts, raw keystrokes
@@ -246,7 +319,11 @@ interface InsightCounts {
  *
  * Resolves with the child's exit code so the caller can mirror it.
  */
-function runCommand(agentCmd: string, agentArgs: string[]): Promise<number> {
+function runCommand(
+  agentCmd: string,
+  agentArgs: string[],
+  memoryMode: RunMemoryMode = 'auto',
+): Promise<number> {
   return new Promise((resolve) => {
     const stdin = process.stdin;
     const stdout = process.stdout;
@@ -356,7 +433,7 @@ function runCommand(agentCmd: string, agentArgs: string[]): Promise<number> {
       // children, so a signal takes precedence and maps to the shell's 128+N
       // (e.g. Ctrl+C → SIGINT → 130).
       const code = signal ? 128 + signal : exitCode ?? 0;
-      finalizeSession(agentCmd, agentArgs, startedAt, transcript, code, signal);
+      finalizeSession(agentCmd, agentArgs, startedAt, transcript, code, signal, memoryMode);
       resolve(code);
     });
   });
@@ -373,6 +450,7 @@ function finalizeSession(
   transcript: string,
   exitCode: number,
   signal?: number,
+  memoryMode: RunMemoryMode = 'auto',
 ): void {
   ensureClinoDirs();
   const endedAt = new Date();
@@ -390,6 +468,28 @@ function finalizeSession(
 
   writeFileSync(sessionFile, sessionContent, 'utf8');
 
+  if (memoryMode === 'none') {
+    process.stdout.write(
+      `\n[clino] session saved → ${sessionFile}\n` +
+        '[clino] memory extraction skipped (--no-memory)\n',
+    );
+    return;
+  }
+
+  if (memoryMode === 'review') {
+    const report = buildExtractionReport(sessionFile);
+    const counts = insightCountsFromReport(report);
+    process.stdout.write(
+      `\n[clino] session saved → ${sessionFile}\n` +
+        '[clino] review mode: memory was not written\n' +
+        `[clino] candidates: ${formatInsightCountsInline(counts)}\n` +
+        '[clino] review with:\n' +
+        '  clino review latest\n' +
+        `  clino review ${sessionFile}\n`,
+    );
+    return;
+  }
+
   let counts: InsightCounts = { decisions: 0, todos: 0, bugs: 0, errors: 0, resolved: 0 };
   if (!processedSessions.has(sessionFile)) {
     counts = extractInsights(sessionFile, { quiet: true });
@@ -400,8 +500,7 @@ function finalizeSession(
   // The single, simple post-session message (requirement: nothing during run).
   process.stdout.write(
     `\n[clino] session saved → ${sessionFile}\n` +
-      `[clino] learned ${counts.decisions} decisions, ${counts.todos} todos, ` +
-      `${counts.bugs} bugs, ${counts.errors} errors, ${counts.resolved} resolved\n`,
+      `[clino] learned ${formatInsightCountsInline(counts)}\n`,
   );
 }
 
@@ -2090,11 +2189,11 @@ if (command === '--version' || command === '-v') {
 
 switch (command) {
   case 'run': {
-    if (!process.argv[3]) {
-      console.error('Usage: clino run <command> [args...]');
+    const parsed = parseRunArgs(process.argv.slice(3));
+    if (!parsed) {
       process.exit(1);
     }
-    runCommand(process.argv[3], process.argv.slice(4)).then((code) => {
+    runCommand(parsed.command, parsed.args, parsed.mode).then((code) => {
       process.exit(code);
     });
     break;

@@ -148,7 +148,7 @@ test('help commands show clean help', () => {
       assert.equal(code ?? 0, 0);
       assert.equal(stderr, '');
       assert.match(stdout, /Clino .* local memory for terminal coding agents/);
-      assert.match(stdout, /clino run <command> \[args\.\.\.\]/);
+      assert.match(stdout, /clino run \[--review\|--no-memory\] <command> \[args\.\.\.\]/);
       assert.match(stdout, /clino inspect latest/);
       assert.match(stdout, /clino review latest/);
       assert.match(stdout, /clino summarize \[--dry-run\]/);
@@ -156,6 +156,10 @@ test('help commands show clean help', () => {
       assert.match(stdout, /clino inject <query>/);
       assert.match(stdout, /clino status/);
       assert.match(stdout, /clino doctor/);
+      assert.match(stdout, /--review\s+Save transcript and show candidates without writing memory/);
+      assert.match(stdout, /--no-memory\s+Save transcript only, skipping extraction/);
+      assert.match(stdout, /clino run --review claude/);
+      assert.match(stdout, /clino run --no-memory codex/);
       assert.match(stdout, /-v, --version\s+Show version/);
       assert.match(stdout, /-h, --help\s+Show help/);
       assert.match(stdout, /CLINO_HOME can override storage location/);
@@ -306,6 +310,137 @@ test('run writes the transcript into the resolved .clino/sessions', () => {
     assert.match(content, /transcript-marker/, 'transcript captures child output');
     assert.match(content, /\*\*Exit code:\*\* 0/);
   } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+});
+
+test('run --review saves transcript, leaves memory unwritten, and can be accepted later', () => {
+  const home = tmp('clino-run-review-home-');
+  const work = tmp('clino-run-review-work-');
+  const message = 'We decided to keep Clino private-by-default and need to add review mode';
+  try {
+    const run = clino(['run', '--review', 'echo', message], { cwd: work, clinoHome: home });
+    assert.equal(run.code ?? 0, 0);
+    assert.equal(run.stderr, '');
+    assert.match(run.stdout, /We decided to keep Clino private-by-default and need to add review mode/);
+    assert.match(run.stdout, /\[clino\] session saved/);
+    assert.match(run.stdout, /\[clino\] review mode: memory was not written/);
+    assert.match(run.stdout, /\[clino\] candidates: 1 decisions, 1 todos, 0 bugs, 0 errors, 0 resolved/);
+    assert.match(run.stdout, /clino review latest/);
+
+    const sessionsDir = join(home, 'sessions');
+    const sessionFiles = readdirSync(sessionsDir);
+    assert.equal(sessionFiles.length, 1, 'one transcript written under CLINO_HOME');
+    assert.match(readFileSync(join(sessionsDir, sessionFiles[0]), 'utf8'), /add review mode/);
+    assert.ok(!existsSync(join(work, '.clino')), 'cwd storage is untouched when CLINO_HOME is set');
+    assert.equal(readIfExists(join(home, 'processed.sessions')), null, 'review mode does not mark sessions processed');
+
+    const before = clino(['memory', 'list'], { cwd: work, clinoHome: home });
+    assert.equal(before.code ?? 0, 0);
+    assert.match(before.stdout, /No memory found\./);
+
+    const preview = clino(['review', 'latest'], { cwd: work, clinoHome: home });
+    assert.equal(preview.code ?? 0, 0);
+    assert.match(preview.stdout, /decision-1\s+decision\s+Keep Clino private-by-default\./);
+    assert.match(preview.stdout, /todo-1\s+todo\s+Add review mode\./);
+
+    const accepted = clino(['review', 'latest', '--accept', 'all'], { cwd: work, clinoHome: home });
+    assert.equal(accepted.code ?? 0, 0);
+    assert.match(accepted.stdout, /Written:\n- decisions: 1\n- todos: 1/m);
+
+    const after = clino(['memory', 'list'], { cwd: work, clinoHome: home });
+    assert.match(after.stdout, /decision-1\s+decision\s+Keep Clino private-by-default\./);
+    assert.match(after.stdout, /todo-1\s+todo\s+Add review mode\./);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+    rmSync(work, { recursive: true, force: true });
+  }
+});
+
+test('run --no-memory saves transcript and leaves it reviewable without writing memory', () => {
+  const home = tmp('clino-run-no-memory-home-');
+  const work = tmp('clino-run-no-memory-work-');
+  try {
+    const run = clino(
+      ['run', '--no-memory', 'echo', 'We decided to keep Clino private-by-default'],
+      { cwd: work, clinoHome: home },
+    );
+    assert.equal(run.code ?? 0, 0);
+    assert.equal(run.stderr, '');
+    assert.match(run.stdout, /\[clino\] session saved/);
+    assert.match(run.stdout, /\[clino\] memory extraction skipped \(--no-memory\)/);
+
+    const sessionsDir = join(home, 'sessions');
+    assert.equal(readdirSync(sessionsDir).length, 1, 'transcript is still saved');
+    assert.equal(readIfExists(join(home, 'processed.sessions')), null, 'no-memory does not mark sessions processed');
+
+    const memory = clino(['memory', 'list'], { cwd: work, clinoHome: home });
+    assert.equal(memory.code ?? 0, 0);
+    assert.match(memory.stdout, /No memory found\./);
+
+    const preview = clino(['review', 'latest'], { cwd: work, clinoHome: home });
+    assert.equal(preview.code ?? 0, 0);
+    assert.match(preview.stdout, /decision-1\s+decision\s+Keep Clino private-by-default\./);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+    rmSync(work, { recursive: true, force: true });
+  }
+});
+
+test('run default still writes memory automatically', () => {
+  const work = tmp('clino-run-default-memory-');
+  try {
+    const run = clino(['run', 'echo', 'We decided to keep automatic memory writes by default'], { cwd: work });
+    assert.equal(run.code ?? 0, 0);
+    assert.match(run.stdout, /\[clino\] learned 1 decisions, 0 todos, 0 bugs, 0 errors, 0 resolved/);
+
+    const memory = clino(['memory', 'list'], { cwd: work });
+    assert.match(memory.stdout, /decision-1\s+decision\s+Keep automatic memory writes by default\./);
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+});
+
+test('run rejects conflicting review and no-memory modes before running a child', () => {
+  const work = tmp('clino-run-conflict-');
+  try {
+    const { code, stdout, stderr } = clino(['run', '--review', '--no-memory', 'echo', 'hello'], { cwd: work });
+    assert.equal(code, 1);
+    assert.equal(stdout, '');
+    assert.match(stderr, /Cannot combine --review and --no-memory/);
+    assert.match(stderr, /Usage: clino run \[--review\|--no-memory\] <command> \[args\.\.\.\]/);
+    assert.ok(!existsSync(join(work, '.clino')), 'conflict does not create storage or run the child');
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+});
+
+test('run --review without a command exits nonzero with usage', () => {
+  const work = tmp('clino-run-review-missing-');
+  try {
+    const { code, stdout, stderr } = clino(['run', '--review'], { cwd: work });
+    assert.equal(code, 1);
+    assert.equal(stdout, '');
+    assert.match(stderr, /Usage: clino run \[--review\|--no-memory\] <command> \[args\.\.\.\]/);
+    assert.ok(!existsSync(join(work, '.clino')), 'missing command does not create storage');
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+});
+
+test('run memory modes preserve child exit codes', () => {
+  const home = tmp('clino-run-exit-home-');
+  const work = tmp('clino-run-exit-work-');
+  try {
+    const review = clino(['run', '--review', 'bash', '-c', 'exit 7'], { cwd: work, clinoHome: home });
+    assert.equal(review.code, 7);
+    assert.match(review.stdout, /\[clino\] review mode: memory was not written/);
+
+    const noMemory = clino(['run', '--no-memory', 'bash', '-c', 'exit 7'], { cwd: work, clinoHome: home });
+    assert.equal(noMemory.code, 7);
+    assert.match(noMemory.stdout, /\[clino\] memory extraction skipped \(--no-memory\)/);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
     rmSync(work, { recursive: true, force: true });
   }
 });
