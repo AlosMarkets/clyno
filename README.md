@@ -250,6 +250,20 @@ memories and final memory files that would be written without modifying
 `.clino/memory`. Add `--show-cleaned` to print the cleaned transcript text used
 for extraction; use `--max-chars <n>` to limit large transcripts.
 
+Review before writing memory:
+
+```bash
+clino review latest
+clino review latest --accept all
+clino review .clino/sessions/<file>.md --accept decision-1,todo-1
+```
+
+`clino review` runs the same extraction pipeline as `summarize`, shows
+deterministic candidate IDs, and is read-only unless `--accept` is provided.
+Use `--accept all` to write every candidate or pass a comma-separated ID list to
+write only selected memories. Add `--no-summary` with `--accept all` to skip the
+synthesized summary.
+
 Manage stored memory:
 
 ```bash
@@ -386,7 +400,7 @@ projects. The Clino home directory is resolved in this order:
 2. `<git-root>/.clino`, when run inside a Git repository (found by walking up for `.git`).
 3. `<cwd>/.clino` otherwise.
 
-All commands (`run`, `inspect`, `summarize`, `memory`, `find`, `inject`, `status`, `doctor`) share this resolved home.
+All commands (`run`, `inspect`, `review`, `summarize`, `memory`, `find`, `inject`, `status`, `doctor`) share this resolved home.
 `~/.clino` is no longer used for project memory; it may be reserved for global
 config later.
 

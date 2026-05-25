@@ -150,6 +150,7 @@ test('help commands show clean help', () => {
       assert.match(stdout, /Clino .* local memory for terminal coding agents/);
       assert.match(stdout, /clino run <command> \[args\.\.\.\]/);
       assert.match(stdout, /clino inspect latest/);
+      assert.match(stdout, /clino review latest/);
       assert.match(stdout, /clino summarize \[--dry-run\]/);
       assert.match(stdout, /clino find <query>/);
       assert.match(stdout, /clino inject <query>/);
@@ -511,6 +512,357 @@ test('show-cleaned honors --max-chars', () => {
     assert.equal(code ?? 0, 0);
     assert.match(stdout, /Cleaned transcript:/);
     assert.match(stdout, /\[truncated to 25 of \d+ chars\]/);
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// clino review
+// ---------------------------------------------------------------------------
+
+test('review latest: no sessions exits nonzero without creating .clino', () => {
+  const work = tmp('clino-review-empty-');
+  try {
+    const { code, stdout, stderr } = clino(['review', 'latest'], { cwd: work });
+    assert.equal(code, 1);
+    assert.equal(stdout, '');
+    assert.match(stderr, /No session transcripts found/);
+    assert.match(stderr, /No files were changed\./);
+    assert.ok(!existsSync(join(work, '.clino')), 'review latest does not create .clino');
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+});
+
+test('review latest: shows deterministic candidate IDs without writing memory', () => {
+  const work = tmp('clino-review-latest-');
+  try {
+    const sessionFile = writeSessionFixture(
+      work,
+      'review.md',
+      [
+        'We decided to keep Clino private-by-default.',
+        'remaining: add a manual memory review workflow',
+      ].join('\n'),
+    );
+
+    const { code, stdout, stderr } = clino(['review', 'latest'], { cwd: work });
+    assert.equal(code ?? 0, 0);
+    assert.equal(stderr, '');
+    assert.match(stdout, /Clino review/);
+    assert.match(stdout, new RegExp(`Session: ${escapeRegExp(sessionFile)}`));
+    assert.match(stdout, /Candidate memories:/);
+    assert.match(stdout, /decision-1\s+decision\s+Keep Clino private-by-default\./);
+    assert.match(stdout, /todo-1\s+todo\s+Add a manual memory review workflow\./);
+    assert.match(stdout, /summary-1\s+summary\s+This session captured/);
+    assert.match(stdout, /No files were changed\./);
+    assert.match(stdout, /clino review latest --accept all/);
+    assert.match(stdout, /clino review latest --accept decision-1,todo-1/);
+    assert.ok(!existsSync(join(work, '.clino', 'memory')), 'review preview does not create memory');
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+});
+
+test('review explicit session supports absolute and relative paths', () => {
+  const work = tmp('clino-review-file-');
+  try {
+    const sessionFile = writeSessionFixture(work, 'explicit.md', 'We decided to use local markdown memory.');
+
+    const absolute = clino(['review', sessionFile], { cwd: work });
+    assert.equal(absolute.code ?? 0, 0);
+    assert.match(absolute.stdout, new RegExp(`Session: ${escapeRegExp(sessionFile)}`));
+    assert.match(absolute.stdout, /decision-1\s+decision\s+Use local markdown memory\./);
+
+    const relativePath = join('.clino', 'sessions', 'explicit.md');
+    const relativeResult = clino(['review', relativePath], { cwd: work });
+    assert.equal(relativeResult.code ?? 0, 0);
+    assert.match(relativeResult.stdout, new RegExp(`Session: ${escapeRegExp(sessionFile)}`));
+    assert.match(relativeResult.stdout, /clino review \.clino\/sessions\/explicit\.md --accept all/);
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+});
+
+test('review missing file exits nonzero with a clear error', () => {
+  const work = tmp('clino-review-missing-');
+  try {
+    const { code, stdout, stderr } = clino(['review', 'missing.md'], { cwd: work });
+    assert.equal(code, 1);
+    assert.equal(stdout, '');
+    assert.match(stderr, /Session file not found:/);
+    assert.match(stderr, /missing\.md/);
+    assert.match(stderr, /No files were changed\./);
+    assert.ok(!existsSync(join(work, '.clino')), 'review missing file does not create .clino');
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+});
+
+test('review is read-only by default even when memory already exists', () => {
+  const work = tmp('clino-review-readonly-');
+  try {
+    const memDir = writeMemoryFixture(work);
+    const before = Object.fromEntries(
+      readdirSync(memDir).map((file) => [file, readFileSync(join(memDir, file), 'utf8')]),
+    );
+    const sessionFile = writeSessionFixture(
+      work,
+      'readonly.md',
+      'We decided to use read-only review previews.',
+    );
+
+    const { code, stderr } = clino(['review', sessionFile], { cwd: work });
+    assert.equal(code ?? 0, 0);
+    assert.equal(stderr, '');
+    for (const [file, content] of Object.entries(before)) {
+      assert.equal(readFileSync(join(memDir, file), 'utf8'), content, `${file} unchanged`);
+    }
+    assert.ok(!existsSync(join(work, '.clino', 'processed.sessions')), 'review does not mark sessions processed');
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+});
+
+test('review --accept all writes candidates and summaries', () => {
+  const work = tmp('clino-review-accept-all-');
+  try {
+    const sessionFile = writeSessionFixture(
+      work,
+      'accept.md',
+      [
+        'We decided to use review acceptance for memory.',
+        'remaining: add review acceptance tests',
+      ].join('\n'),
+    );
+
+    const { code, stdout, stderr } = clino(['review', sessionFile, '--accept', 'all'], { cwd: work });
+    assert.equal(code ?? 0, 0);
+    assert.equal(stderr, '');
+    assert.match(stdout, /Accepted memories:/);
+    assert.match(stdout, /- decision-1: Use review acceptance for memory\./);
+    assert.match(stdout, /- todo-1: Add review acceptance tests\./);
+    assert.match(stdout, /Written:\n- decisions: 1\n- todos: 1/m);
+    assert.match(stdout, /- summaries: 1/);
+
+    const memDir = join(work, '.clino', 'memory');
+    assert.match(readFileSync(join(memDir, 'decisions.md'), 'utf8'), /Use review acceptance for memory\./);
+    assert.match(readFileSync(join(memDir, 'todos.md'), 'utf8'), /Add review acceptance tests\./);
+    assert.match(readFileSync(join(memDir, 'summaries.md'), 'utf8'), /This session captured 1 decision and 1 TODO/);
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+});
+
+test('review --accept all --no-summary writes extracted memories except summary', () => {
+  const work = tmp('clino-review-no-summary-');
+  try {
+    const sessionFile = writeSessionFixture(
+      work,
+      'no-summary.md',
+      [
+        'We decided to use review no-summary accepts.',
+        'remaining: add review no-summary tests',
+      ].join('\n'),
+    );
+
+    const { code, stdout, stderr } = clino(
+      ['review', sessionFile, '--accept', 'all', '--no-summary'],
+      { cwd: work },
+    );
+    assert.equal(code ?? 0, 0);
+    assert.equal(stderr, '');
+    assert.match(stdout, /- decision-1: Use review no-summary accepts\./);
+    assert.match(stdout, /- todo-1: Add review no-summary tests\./);
+    assert.doesNotMatch(stdout, /summary-1:/);
+    assert.match(stdout, /- summaries: 0/);
+
+    const memDir = join(work, '.clino', 'memory');
+    assert.match(readFileSync(join(memDir, 'decisions.md'), 'utf8'), /Use review no-summary accepts\./);
+    assert.match(readFileSync(join(memDir, 'todos.md'), 'utf8'), /Add review no-summary tests\./);
+    assert.equal(readIfExists(join(memDir, 'summaries.md')), null);
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+});
+
+test('review --accept all is idempotent and does not duplicate memory', () => {
+  const work = tmp('clino-review-idempotent-');
+  try {
+    const sessionFile = writeSessionFixture(
+      work,
+      'idempotent.md',
+      [
+        'We decided to use idempotent review accepts.',
+        'remaining: add idempotent review tests',
+      ].join('\n'),
+    );
+
+    const first = clino(['review', sessionFile, '--accept', 'all'], { cwd: work });
+    assert.equal(first.code ?? 0, 0);
+    const second = clino(['review', sessionFile, '--accept', 'all'], { cwd: work });
+    assert.equal(second.code ?? 0, 0);
+    assert.match(second.stdout, /Written:\n- decisions: 0\n- todos: 0/m);
+    assert.match(second.stdout, /- summaries: 0/);
+
+    const decisions = readFileSync(join(work, '.clino', 'memory', 'decisions.md'), 'utf8');
+    const todos = readFileSync(join(work, '.clino', 'memory', 'todos.md'), 'utf8');
+    assert.equal((decisions.match(/Use idempotent review accepts\./g) ?? []).length, 1);
+    assert.equal((todos.match(/Add idempotent review tests\./g) ?? []).length, 1);
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+});
+
+test('review --accept selected IDs writes only selected candidates', () => {
+  const work = tmp('clino-review-selected-');
+  try {
+    const sessionFile = writeSessionFixture(
+      work,
+      'selected.md',
+      [
+        'We decided to use selected review writes.',
+        'remaining: add selected review tests',
+        'GUARDRAILS.md has an unclosed code fence.',
+      ].join('\n'),
+    );
+
+    const { code, stdout, stderr } = clino(
+      ['review', sessionFile, '--accept', 'decision-1,todo-1'],
+      { cwd: work },
+    );
+    assert.equal(code ?? 0, 0);
+    assert.equal(stderr, '');
+    assert.match(stdout, /- decision-1: Use selected review writes\./);
+    assert.match(stdout, /- todo-1: Add selected review tests\./);
+    assert.doesNotMatch(stdout, /bug-1:/);
+
+    const memDir = join(work, '.clino', 'memory');
+    assert.match(readFileSync(join(memDir, 'decisions.md'), 'utf8'), /Use selected review writes\./);
+    assert.match(readFileSync(join(memDir, 'todos.md'), 'utf8'), /Add selected review tests\./);
+    assert.equal(readIfExists(join(memDir, 'bugs.md')), null);
+    assert.equal(readIfExists(join(memDir, 'summaries.md')), null);
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+});
+
+test('review invalid accept ID writes nothing and exits nonzero', () => {
+  const work = tmp('clino-review-invalid-');
+  try {
+    const sessionFile = writeSessionFixture(
+      work,
+      'invalid.md',
+      'We decided to validate review candidate IDs before writing.',
+    );
+
+    const { code, stdout, stderr } = clino(['review', sessionFile, '--accept', 'decision-99'], { cwd: work });
+    assert.equal(code, 1);
+    assert.equal(stdout, '');
+    assert.match(stderr, /Invalid accept ID: decision-99/);
+    assert.match(stderr, /No files were changed\./);
+    assert.ok(!existsSync(join(work, '.clino', 'memory')), 'invalid accept does not create memory');
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+});
+
+test('review respects CLINO_HOME for latest sessions and memory writes', () => {
+  const home = tmp('clino-review-home-');
+  const work = tmp('clino-review-work-');
+  try {
+    writeHomeSessionFixture(home, 'home.md', 'We decided to keep CLINO_HOME review isolated.');
+
+    const { code, stdout, stderr } = clino(['review', 'latest', '--accept', 'all'], {
+      cwd: work,
+      clinoHome: home,
+    });
+    assert.equal(code ?? 0, 0);
+    assert.equal(stderr, '');
+    assert.match(stdout, new RegExp(`Session: ${escapeRegExp(join(home, 'sessions', 'home.md'))}`));
+    assert.match(readFileSync(join(home, 'memory', 'decisions.md'), 'utf8'), /Keep CLINO_HOME review isolated\./);
+    assert.ok(!existsSync(join(work, '.clino')), 'cwd storage is untouched when CLINO_HOME is set');
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+    rmSync(work, { recursive: true, force: true });
+  }
+});
+
+test('review uses cleaning filters so Codex intro/login noise yields zero candidates', () => {
+  const work = tmp('clino-review-codex-noise-');
+  try {
+    const codexIntro =
+      "_._:=+===+,_ WelcometoCodex,OpenAI'scommand-linecodingagent" +
+      'SigninwithChatGPTtouseCodexaspartofyourpaidplanorconnectanAPIkeyforusage-basedbilling' +
+      'PressEntertocontinue';
+    const sessionFile = writeSessionFixture(work, 'codex.md', codexIntro);
+
+    const { code, stdout, stderr } = clino(['review', sessionFile], { cwd: work });
+    assert.equal(code ?? 0, 0);
+    assert.equal(stderr, '');
+    assert.match(stdout, /No candidate memories found\./);
+    assert.match(stdout, /No files were changed\./);
+    assert.ok(!existsSync(join(work, '.clino', 'memory')), 'noise-only review does not create memory');
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+});
+
+test('review uses prompt/spec and Clino-output filters', () => {
+  const work = tmp('clino-review-spec-noise-');
+  try {
+    const sessionFile = writeSessionFixture(
+      work,
+      'spec.md',
+      [
+        'Goal:',
+        '- Add clino review latest',
+        'Requirements:',
+        '- clino review latest',
+        'Candidate memories:',
+        'decision-1  decision  Keep Clino private-by-default.',
+        'todo-1      todo      Add a manual memory review workflow.',
+        'No files were changed.',
+        'To write all candidates:',
+        '  clino review latest --accept all',
+      ].join('\n'),
+    );
+
+    const { code, stdout, stderr } = clino(['review', sessionFile], { cwd: work });
+    assert.equal(code ?? 0, 0);
+    assert.equal(stderr, '');
+    assert.match(stdout, /No candidate memories found\./);
+    assert.doesNotMatch(stdout, /Keep Clino private-by-default/);
+    assert.ok(!existsSync(join(work, '.clino', 'memory')), 'spec/output review does not create memory');
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+});
+
+test('review selected resolved item writes resolved memory and suppresses matching open bug during inject', () => {
+  const work = tmp('clino-review-resolved-');
+  try {
+    const bugSession = writeSessionFixture(
+      work,
+      'bug.md',
+      'GUARDRAILS.md is incomplete/truncated: it ends with an unclosed code fence.',
+    );
+    const fixedSession = writeSessionFixture(work, 'fixed.md', 'Fixed GUARDRAILS.md unclosed code fence.');
+
+    assert.equal(clino(['summarize', bugSession], { cwd: work }).code ?? 0, 0);
+    const reviewed = clino(['review', fixedSession, '--accept', 'resolved-1'], { cwd: work });
+    assert.equal(reviewed.code ?? 0, 0);
+    assert.match(reviewed.stdout, /- resolved-1: Fixed GUARDRAILS\.md unclosed code fence\./);
+
+    const resolved = join(work, '.clino', 'memory', 'resolved.md');
+    assert.match(readFileSync(resolved, 'utf8'), /Fixed GUARDRAILS\.md unclosed code fence\./);
+
+    const injected = clino(['inject', 'GUARDRAILS'], { cwd: work });
+    assert.doesNotMatch(injected.stdout, /## Open Bugs/);
+    assert.doesNotMatch(injected.stdout, /incomplete\/truncated/);
+    assert.match(injected.stdout, /## Recently Resolved/);
+    assert.match(injected.stdout, /Fixed GUARDRAILS\.md unclosed code fence\./);
   } finally {
     rmSync(work, { recursive: true, force: true });
   }

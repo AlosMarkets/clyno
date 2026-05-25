@@ -514,7 +514,7 @@ const CLINO_OUTPUT_PATTERNS: RegExp[] = [
   // Synthesized-summary text echoed back as a candidate.
   /^this session captured\b/i,
   // Section headers Clino prints during summarize/inspect.
-  /^clino\s+(run|find|inject|summarize|inspect|status|doctor|memory|--version|-v|help)\b/i,
+  /^clino\s+(run|find|inject|summarize|inspect|review|status|doctor|memory|--version|-v|help)\b/i,
   /^memory\s+(list|show|delete)\s+invalid\b/i,
   /^candidate memories\b/i,
   /^extraction counts\b/i,

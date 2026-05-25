@@ -155,6 +155,8 @@ Usage:
   clino run <command> [args...]
   clino inspect latest [--show-cleaned] [--max-chars <n>]
   clino inspect <session-file> [--show-cleaned] [--max-chars <n>]
+  clino review latest [--accept all|<ids>] [--no-summary]
+  clino review <session-file> [--accept all|<ids>] [--no-summary]
   clino summarize [--dry-run] [--show-cleaned] [--max-chars <n>] <session-file>
   clino memory list [--type <type>] [--include-resolved]
   clino memory show <id>
@@ -175,6 +177,8 @@ Examples:
   clino run claude
   clino run codex
   clino inspect latest
+  clino review latest
+  clino review latest --accept all
   clino summarize --dry-run .clino/sessions/2026-05-24-20-30-00.md
   clino memory list
   clino memory show decision-1
@@ -413,15 +417,15 @@ function extractInsights(
   if (!opts.quiet) console.log('🔍 Extracting insights from session...');
 
   ensureClinoDirs();
-  const content = readFileSync(sessionFilePath, 'utf8');
-  const signals = extractSignals(content);
+  const report = buildExtractionReport(sessionFilePath);
+  const signals = report.signals;
 
   writeMemoryFile('decisions.md', signals.decisions, sessionFilePath);
   writeMemoryFile('todos.md', signals.todos, sessionFilePath);
   writeMemoryFile('bugs.md', signals.bugs, sessionFilePath);
   writeMemoryFile('errors.md', signals.errors, sessionFilePath);
   writeMemoryFile('resolved.md', signals.resolved, sessionFilePath);
-  writeSummaryFile('summaries.md', synthesizeSummary(signals), sessionFilePath);
+  writeSummaryFile('summaries.md', report.summary, sessionFilePath);
 
   const counts = {
     decisions: signals.decisions.length,
@@ -755,20 +759,27 @@ function printSummarize(args: string[]): number {
 /**
  * Merge freshly extracted items with what is already stored, re-running repair
  * and the quality filter over existing content (so legacy junk is cleaned too),
- * then dedupe with richer-memory preference and rewrite the file.
+ * then dedupe with richer-memory preference and rewrite the file. Returns the
+ * number of new stored bullet memories added by this write.
  */
-function writeMemoryFile(filename: string, items: string[], source: string): void {
+function writeMemoryFile(filename: string, items: string[], source: string): number {
   const type = filename.replace('.md', '') as MemoryType;
   const filePath = join(MEMORY_DIR, filename);
-  if (items.length === 0) return;
+  if (items.length === 0) return 0;
 
   const existing = readStoredMemoryItems(filename, type);
 
   const merged = dedupeMemories([...items, ...existing]);
-  if (merged.length === 0) return;
+  if (merged.length === 0) return 0;
+  if (sameStringArray(merged, existing)) return 0;
 
   const body = merged.map((m) => `- ${m}`).join('\n');
   writeFileSync(filePath, frontmatter(type, source) + body + '\n', 'utf8');
+  return Math.max(0, merged.length - existing.length);
+}
+
+function sameStringArray(a: string[], b: string[]): boolean {
+  return a.length === b.length && a.every((item, index) => item === b[index]);
 }
 
 function readStoredMemoryItems(filename: string, type: MemoryType): string[] {
@@ -785,10 +796,16 @@ function readStoredMemoryItems(filename: string, type: MemoryType): string[] {
  * Write the synthesized summary. Summaries are regenerated fresh each run and
  * must not duplicate the raw decision/bug/todo bullets.
  */
-function writeSummaryFile(filename: string, summary: string, source: string): void {
-  if (!summary) return;
+function writeSummaryFile(filename: string, summary: string, source: string): number {
+  if (!summary) return 0;
   const filePath = join(MEMORY_DIR, filename);
+  if (existsSync(filePath)) {
+    const parsed = parseFrontmatter(readFileSync(filePath, 'utf8'));
+    const existingSummaries = summaryTextItems(parsed.body).map((item) => item.text.trim());
+    if (existingSummaries.includes(summary.trim())) return 0;
+  }
   writeFileSync(filePath, frontmatter('summaries', source) + summary + '\n', 'utf8');
+  return 1;
 }
 
 function frontmatter(type: string, source: string): string {
@@ -1217,6 +1234,289 @@ function formatMemoryCounts(counts: MemoryCounts): string[] {
     `- resolved: ${counts.resolved}`,
     `- summaries: ${counts.summaries}`,
   ];
+}
+
+interface ParsedReviewArgs {
+  targetArg: string;
+  accept?: string;
+  noSummary: boolean;
+}
+
+interface ReviewCandidate {
+  id: string;
+  type: MemoryDisplayType;
+  category: MemoryCategory;
+  text: string;
+}
+
+const REVIEW_USAGE = 'Usage: clino review <latest|session-file> [--accept all|<ids>] [--no-summary]';
+
+const REVIEW_BUCKETS: Array<{ category: MemoryType; displayType: MemoryDisplayType }> = [
+  { category: 'decisions', displayType: 'decision' },
+  { category: 'todos', displayType: 'todo' },
+  { category: 'bugs', displayType: 'bug' },
+  { category: 'errors', displayType: 'error' },
+  { category: 'resolved', displayType: 'resolved' },
+];
+
+function parseReviewArgs(args: string[]): ParsedReviewArgs | null {
+  const positionals: string[] = [];
+  let accept: string | undefined;
+  let noSummary = false;
+
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === '--accept') {
+      const value = args[i + 1];
+      if (!value || value.startsWith('--')) {
+        console.error(REVIEW_USAGE);
+        return null;
+      }
+      accept = value;
+      i++;
+      continue;
+    }
+    if (arg === '--no-summary') {
+      noSummary = true;
+      continue;
+    }
+    if (arg.startsWith('--')) {
+      console.error(`Unknown review option: ${arg}`);
+      console.error(REVIEW_USAGE);
+      return null;
+    }
+    positionals.push(arg);
+  }
+
+  if (positionals.length !== 1) {
+    console.error(REVIEW_USAGE);
+    return null;
+  }
+
+  return { targetArg: positionals[0], accept, noSummary };
+}
+
+function buildReviewCandidates(report: ExtractionReport): ReviewCandidate[] {
+  const candidates: ReviewCandidate[] = [];
+  const idCounts = new Map<MemoryDisplayType, number>();
+
+  for (const bucket of REVIEW_BUCKETS) {
+    for (const text of report.signals[bucket.category]) {
+      candidates.push({
+        id: nextMemoryId(bucket.displayType, idCounts),
+        type: bucket.displayType,
+        category: bucket.category,
+        text,
+      });
+    }
+  }
+
+  if (report.summary) {
+    candidates.push({
+      id: nextMemoryId('summary', idCounts),
+      type: 'summary',
+      category: 'summaries',
+      text: report.summary,
+    });
+  }
+
+  return candidates;
+}
+
+function formatReviewCandidates(candidates: ReviewCandidate[]): string[] {
+  if (candidates.length === 0) {
+    return ['Candidate memories:', '', 'No candidate memories found.'];
+  }
+
+  const idWidth = Math.max(...candidates.map((candidate) => candidate.id.length)) + 2;
+  const typeWidth = Math.max(...candidates.map((candidate) => candidate.type.length)) + 2;
+  return [
+    'Candidate memories:',
+    '',
+    ...candidates.map(
+      (candidate) =>
+        `${rightPad(candidate.id, idWidth)}${rightPad(candidate.type, typeWidth)}${candidate.text}`,
+    ),
+  ];
+}
+
+function formatReviewPreview(
+  report: ExtractionReport,
+  candidates: ReviewCandidate[],
+  targetArg: string,
+): string[] {
+  const lines = [
+    'Clino review',
+    '',
+    `Session: ${report.sessionFilePath}`,
+    '',
+    ...formatReviewCandidates(candidates),
+    '',
+    'No files were changed.',
+  ];
+
+  if (candidates.length > 0) {
+    const selectedExample = candidates.slice(0, 2).map((candidate) => candidate.id).join(',');
+    lines.push(
+      '',
+      'To write all candidates:',
+      `  clino review ${targetArg} --accept all`,
+      '',
+      'To write selected candidates:',
+      `  clino review ${targetArg} --accept ${selectedExample}`,
+    );
+  }
+
+  return lines;
+}
+
+function selectReviewCandidates(
+  candidates: ReviewCandidate[],
+  accept: string,
+  noSummary: boolean,
+): { selected: ReviewCandidate[]; error?: string } {
+  const candidateById = new Map(candidates.map((candidate) => [candidate.id, candidate]));
+  let selected: ReviewCandidate[];
+
+  if (accept.toLowerCase() === 'all') {
+    selected = candidates;
+  } else {
+    const ids = accept
+      .split(',')
+      .map((id) => id.trim().toLowerCase())
+      .filter(Boolean);
+    if (ids.length === 0) return { selected: [], error: 'No accept IDs provided.' };
+
+    const invalid = ids.filter((id) => !candidateById.has(id));
+    if (invalid.length > 0) {
+      return { selected: [], error: `Invalid accept ID${invalid.length === 1 ? '' : 's'}: ${invalid.join(',')}` };
+    }
+
+    const seen = new Set<string>();
+    selected = [];
+    for (const id of ids) {
+      if (seen.has(id)) continue;
+      seen.add(id);
+      selected.push(candidateById.get(id)!);
+    }
+  }
+
+  if (noSummary) {
+    selected = selected.filter((candidate) => candidate.type !== 'summary');
+  }
+
+  return { selected };
+}
+
+function emptyMemoryCounts(): MemoryCounts {
+  return { decisions: 0, todos: 0, bugs: 0, errors: 0, resolved: 0, summaries: 0 };
+}
+
+function writeReviewCandidates(candidates: ReviewCandidate[], source: string): MemoryCounts {
+  if (candidates.length === 0) return emptyMemoryCounts();
+
+  const signals: ReturnType<typeof extractSignals> = {
+    decisions: [],
+    todos: [],
+    bugs: [],
+    errors: [],
+    resolved: [],
+  };
+  let summary = '';
+
+  for (const candidate of candidates) {
+    if (candidate.category === 'summaries') {
+      summary = candidate.text;
+    } else {
+      signals[candidate.category].push(candidate.text);
+    }
+  }
+
+  ensureClinoDirs();
+  return {
+    decisions: writeMemoryFile('decisions.md', signals.decisions, source),
+    todos: writeMemoryFile('todos.md', signals.todos, source),
+    bugs: writeMemoryFile('bugs.md', signals.bugs, source),
+    errors: writeMemoryFile('errors.md', signals.errors, source),
+    resolved: writeMemoryFile('resolved.md', signals.resolved, source),
+    summaries: writeSummaryFile('summaries.md', summary, source),
+  };
+}
+
+function formatAcceptedReview(
+  report: ExtractionReport,
+  selected: ReviewCandidate[],
+  written: MemoryCounts,
+): string[] {
+  if (selected.length === 0) {
+    return [
+      'Clino review',
+      '',
+      `Session: ${report.sessionFilePath}`,
+      '',
+      'No candidate memories selected.',
+      '',
+      'No files were changed.',
+    ];
+  }
+
+  return [
+    'Clino review',
+    '',
+    `Session: ${report.sessionFilePath}`,
+    '',
+    'Accepted memories:',
+    ...selected.map((candidate) => `- ${candidate.id}: ${candidate.text}`),
+    '',
+    'Written:',
+    ...formatMemoryCounts(written),
+  ];
+}
+
+function printReview(args: string[]): number {
+  const parsed = parseReviewArgs(args);
+  if (!parsed) return 1;
+
+  const target = parsed.targetArg === 'latest'
+    ? newestSessionFile()
+    : resolveSessionArg(parsed.targetArg);
+
+  if (!target) {
+    console.error(`No session transcripts found in ${SESSIONS_DIR}.`);
+    console.error('No files were changed.');
+    return 1;
+  }
+  if (!existsSync(target)) {
+    console.error(`Session file not found: ${target}`);
+    console.error('No files were changed.');
+    return 1;
+  }
+
+  let report: ExtractionReport;
+  try {
+    report = buildExtractionReport(target);
+  } catch (err) {
+    console.error(`Could not review session: ${(err as Error).message}`);
+    console.error('No files were changed.');
+    return 1;
+  }
+
+  const candidates = buildReviewCandidates(report);
+  if (!parsed.accept) {
+    console.log(formatReviewPreview(report, candidates, parsed.targetArg).join('\n'));
+    return 0;
+  }
+
+  const selection = selectReviewCandidates(candidates, parsed.accept, parsed.noSummary);
+  if (selection.error) {
+    console.error(selection.error);
+    console.error('No files were changed.');
+    return 1;
+  }
+
+  const written = writeReviewCandidates(selection.selected, report.sessionFilePath);
+  console.log(formatAcceptedReview(report, selection.selected, written).join('\n'));
+  return 0;
 }
 
 function buildRebuildPlan(sessionFiles: string[]): RebuildPlan {
@@ -1807,6 +2107,11 @@ switch (command) {
 
   case 'inspect': {
     process.exitCode = printInspect(process.argv.slice(3));
+    break;
+  }
+
+  case 'review': {
+    process.exitCode = printReview(process.argv.slice(3));
     break;
   }
 
