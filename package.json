@@ -18,7 +18,7 @@
     "clean": "rm -rf dist",
     "dev": "ts-node src/index.ts",
     "start": "node dist/index.js",
-    "test": "tsc && node --test tests/memory-quality.test.mjs tests/run-pty.test.mjs tests/storage.test.mjs",
+    "test": "tsc && node --test tests/memory-quality.test.mjs tests/run-pty.test.mjs tests/storage.test.mjs tests/secrets.test.mjs",
     "prepare": "npm run build",
     "prepublishOnly": "npm run clean && npm run build && npm test"
   },

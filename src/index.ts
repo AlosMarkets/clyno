@@ -27,6 +27,8 @@ import {
   isQualityMemory,
   isSuspiciousCandidate,
   memoryResolvesItem,
+  redactSecrets,
+  SECRET_PLACEHOLDER,
   type MemoryType,
 } from './memory.js';
 
@@ -823,6 +825,11 @@ function formatCleanedBlock(label: string, cleanedText: string, maxChars: number
   if (truncated) {
     lines.push(`[truncated to ${maxChars} of ${cleanedText.length} chars]`);
   }
+  lines.push(
+    '',
+    'Note: the raw transcript on disk is local and unchanged; this cleaned ' +
+      'extraction output redacts obvious secrets.',
+  );
   return lines;
 }
 
@@ -1219,6 +1226,10 @@ function generateContext(query: string, maxChars = 3000): string {
     context += '\n\n';
   }
 
+  // Defense in depth: memory files are written redacted, but scrub the assembled
+  // context once more before injecting it into an agent's prompt.
+  context = redactSecrets(context);
+
   if (context.length > maxChars) {
     context = context.slice(0, maxChars) + '\n\n*[Context truncated for token efficiency]*\n';
   }
@@ -1481,6 +1492,7 @@ interface ReviewCandidate {
   category: MemoryCategory;
   text: string;
   suspicious: boolean;
+  redacted: boolean;
 }
 
 const REVIEW_USAGE =
@@ -1568,6 +1580,7 @@ function buildReviewCandidates(report: ExtractionReport): ReviewCandidate[] {
         category: bucket.category,
         text,
         suspicious: reviewCandidateSuspicious(bucket.displayType, bucket.category, text),
+        redacted: text.includes(SECRET_PLACEHOLDER),
       });
     }
   }
@@ -1579,6 +1592,7 @@ function buildReviewCandidates(report: ExtractionReport): ReviewCandidate[] {
       category: 'summaries',
       text: report.summary,
       suspicious: reviewCandidateSuspicious('summary', 'summaries', report.summary),
+      redacted: report.summary.includes(SECRET_PLACEHOLDER),
     });
   }
 
@@ -1596,7 +1610,11 @@ function formatReviewCandidates(candidates: ReviewCandidate[]): string[] {
     'Candidate memories:',
     '',
     ...candidates.map((candidate) => {
-      const suffix = candidate.suspicious ? '  [suspicious]' : '';
+      const tags = [
+        candidate.redacted ? '[redacted]' : '',
+        candidate.suspicious ? '[suspicious]' : '',
+      ].filter(Boolean);
+      const suffix = tags.length ? `  ${tags.join(' ')}` : '';
       return `${rightPad(candidate.id, idWidth)}${rightPad(candidate.type, typeWidth)}${candidate.text}${suffix}`;
     }),
   ];
@@ -2353,6 +2371,9 @@ function printStatus(): void {
       ? [`- skipped sessions: ${countSkippedReviewSessions()}`]
       : []),
     '',
+    'Privacy:',
+    '- Secret redaction: enabled for extraction/review/inject output',
+    '',
     'Try:',
     '- clino find "auth"',
     '- clino inject "storage"',
@@ -2447,6 +2468,10 @@ function printDoctor(): number {
     `- CLI bin: ${cliBin.label}`,
     `- Build output: ${buildOutput.label}`,
     '',
+    'Privacy:',
+    '- Secret redaction: enabled for extraction/review/inject output',
+    '- Raw transcripts: stored locally, unchanged',
+    '',
     'Warnings:',
     ...(warnings.length === 0 ? ['- none'] : warnings.map((warning) => `- ${warning}`)),
   ];
@@ -2520,7 +2545,9 @@ switch (command) {
         const label = key === 'resolved' ? `${result.file} (Resolved)` : result.file;
         console.log(`📄 ${label}:`);
         result.matches.forEach((match, i) => {
-          console.log(`  ${i + 1}. ${match.replace(/^[-*]\s+/, '')}`);
+          // Defense in depth: memory files are written redacted, but scrub again
+          // before output in case a secret reached the file some other way.
+          console.log(`  ${i + 1}. ${redactSecrets(match.replace(/^[-*]\s+/, ''))}`);
         });
         console.log('');
       });

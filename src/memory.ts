@@ -327,6 +327,171 @@ function redactAuthMarkers(text: string): string {
   return text.replace(AUTH_RESIDUE_RE, '').replace(AUTH_STATE_PARAM_RE, '');
 }
 
+// ---------------------------------------------------------------------------
+// Secret detection / redaction (MVP)
+//
+// Rule-based detection of obvious high-risk strings (API keys, tokens, PEM
+// private keys, credentialed URLs, secret-y env assignments). A detected value
+// is replaced with a fixed placeholder so the surrounding memory stays readable.
+// This is the single gate that keeps secrets out of cleaned extraction output,
+// memory files, review candidates, find/inject output and summaries: it is wired
+// into `cleanTranscriptForExtraction` (the choke point every memory path flows
+// through). Raw transcripts on disk are never rewritten.
+//
+// The detection is deliberately conservative — it aims to catch obvious leaks
+// without mangling ordinary prose (e.g. "password reset", "primary_key index").
+// ---------------------------------------------------------------------------
+
+export const SECRET_PLACEHOLDER = '[REDACTED_SECRET]';
+
+export interface SecretFinding {
+  kind: string;
+  match: string;
+  index: number;
+}
+
+// Secret keyword as a substring of an env-var name. Bare "KEY" is excluded so
+// PRIMARY_KEY / FOREIGN_KEY are not redacted; only secret-bearing compounds are.
+const SECRET_ENV_KEYWORD_RE =
+  /(API[_-]?KEY|ACCESS[_-]?KEY|SECRET[_-]?KEY|PRIVATE[_-]?KEY|SERVICE[_-]?ROLE[_-]?KEY|ENCRYPTION[_-]?KEY|SIGNING[_-]?KEY|SESSION[_-]?KEY|TOKEN|SECRET|PASSWORD|PASSWD|PASSPHRASE|CREDENTIALS?|DATABASE[_-]?URL|REDIS[_-]?URL)/i;
+
+/**
+ * Whether an env-var name's value should be treated as a secret. We require the
+ * name to look like a config identifier (screaming-case or containing an
+ * underscore) so lowercase prose ("password:", "the secret sauce is") is left
+ * alone, while OPENAI_API_KEY / client_secret / DATABASE_URL are caught.
+ */
+function isSecretEnvName(name: string): boolean {
+  const hasUnderscore = name.includes('_');
+  const isScreaming = /^[A-Z0-9_]+$/.test(name);
+  if (!hasUnderscore && !isScreaming) return false;
+  return SECRET_ENV_KEYWORD_RE.test(name);
+}
+
+// NAME = VALUE / NAME: VALUE. The leading group prevents matching a dotted
+// member (foo.bar) or mid-identifier; value is a quoted string or one non-space
+// run. Used by both detection and redaction.
+const ENV_ASSIGN_RE =
+  /(^|[^A-Za-z0-9_.$])([A-Za-z][A-Za-z0-9_]*)(\s*[:=]\s*)("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|`[^`]*`|\S+)/g;
+
+// Whole PEM private-key blocks (BEGIN…END), and a lone BEGIN marker as fallback.
+const PRIVATE_KEY_BLOCK_RE =
+  /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z0-9 ]*PRIVATE KEY-----/g;
+const PRIVATE_KEY_MARKER_RE = /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----/g;
+
+// scheme://user:pass@host — credentials embedded in a URL.
+const CRED_URL_RE = /\b[a-z][a-z0-9+.\-]*:\/\/[^\s:/@]+:[^\s:/@]+@\S+/gi;
+
+// Bare token formats. Anchored on a word boundary so "Risk-averse" / "task-12"
+// are never mistaken for keys. Anthropic is tried before the generic OpenAI key.
+const TOKEN_PATTERNS: Array<{ kind: string; re: RegExp }> = [
+  { kind: 'anthropic-key', re: /\bsk-ant-[A-Za-z0-9_-]{6,}/g },
+  { kind: 'openai-key', re: /\bsk-[A-Za-z0-9]{4,}/g },
+  { kind: 'github-fine-grained-token', re: /\bgithub_pat_[A-Za-z0-9_]{10,}/g },
+  { kind: 'github-token', re: /\bgh[pousr]_[A-Za-z0-9]{6,}/g },
+  { kind: 'gitlab-token', re: /\bglpat-[A-Za-z0-9_-]{8,}/g },
+  { kind: 'npm-token', re: /\bnpm_[A-Za-z0-9]{12,}/g },
+  { kind: 'slack-token', re: /\bxox[baprs]-[A-Za-z0-9-]{8,}/g },
+  { kind: 'jwt', re: /\beyJ[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{6,}/g },
+];
+
+// OAuth / auth query params whose value is a secret. `state` is masked only in
+// query-string position so prose like "state=running" is untouched.
+const OAUTH_PARAM_RE =
+  /\b(access_token|refresh_token|id_token|client_secret|code_challenge|code_verifier)=[^\s&#]+/gi;
+const OAUTH_STATE_RE = /([?&]state)=[^\s&#]+/gi;
+
+function isQuotedSecretValue(value: string): boolean {
+  return /^(?:"[\s\S]*"|'[\s\S]*'|`[\s\S]*`)$/.test(value);
+}
+
+/** Split trailing sentence punctuation off a value so it survives redaction. */
+function splitTrailingPunctuation(value: string): { trailing: string } {
+  const m = value.match(/[.,;:!?]+$/);
+  return { trailing: m ? m[0] : '' };
+}
+
+/** All obvious secrets found in `text` (rule-based, best-effort). */
+export function detectSecrets(text: string): SecretFinding[] {
+  if (!text) return [];
+  const findings: SecretFinding[] = [];
+
+  let foundBlock = false;
+  for (const m of text.matchAll(PRIVATE_KEY_BLOCK_RE)) {
+    findings.push({ kind: 'private-key', match: m[0], index: m.index ?? 0 });
+    foundBlock = true;
+  }
+  if (!foundBlock) {
+    for (const m of text.matchAll(PRIVATE_KEY_MARKER_RE)) {
+      findings.push({ kind: 'private-key', match: m[0], index: m.index ?? 0 });
+    }
+  }
+  for (const m of text.matchAll(CRED_URL_RE)) {
+    findings.push({ kind: 'credentialed-url', match: m[0], index: m.index ?? 0 });
+  }
+  for (const { kind, re } of TOKEN_PATTERNS) {
+    for (const m of text.matchAll(re)) {
+      findings.push({ kind, match: m[0], index: m.index ?? 0 });
+    }
+  }
+  for (const m of text.matchAll(OAUTH_PARAM_RE)) {
+    findings.push({ kind: 'oauth-param', match: m[0], index: m.index ?? 0 });
+  }
+  for (const m of text.matchAll(OAUTH_STATE_RE)) {
+    findings.push({ kind: 'oauth-state', match: m[0], index: m.index ?? 0 });
+  }
+  for (const m of text.matchAll(ENV_ASSIGN_RE)) {
+    const [, , name, sep, value] = m;
+    if (!isSecretEnvName(name)) continue;
+    if (value.includes(SECRET_PLACEHOLDER)) continue; // already redacted
+    findings.push({ kind: 'env-assignment', match: `${name}${sep}${value}`, index: m.index ?? 0 });
+  }
+  return findings;
+}
+
+/** True when `text` contains at least one obvious secret. */
+export function containsSecret(text: string): boolean {
+  return detectSecrets(text).length > 0;
+}
+
+/**
+ * Replace obvious secret values with `[REDACTED_SECRET]`, preserving enough
+ * surrounding context (env-var name, prose, trailing punctuation) to keep the
+ * memory understandable. Idempotent: re-running over already-redacted text is a
+ * no-op.
+ */
+export function redactSecrets(text: string): string {
+  if (!text) return text;
+  let out = text;
+  out = out.replace(PRIVATE_KEY_BLOCK_RE, SECRET_PLACEHOLDER);
+  out = out.replace(PRIVATE_KEY_MARKER_RE, SECRET_PLACEHOLDER);
+  out = out.replace(CRED_URL_RE, SECRET_PLACEHOLDER);
+  out = out.replace(ENV_ASSIGN_RE, (full, lead, name, sep, value) => {
+    if (!isSecretEnvName(name)) return full;
+    const trailing = isQuotedSecretValue(value) ? '' : splitTrailingPunctuation(value).trailing;
+    return `${lead}${name}${sep}${SECRET_PLACEHOLDER}${trailing}`;
+  });
+  for (const { re } of TOKEN_PATTERNS) out = out.replace(re, SECRET_PLACEHOLDER);
+  out = out.replace(OAUTH_PARAM_RE, (_m, key) => `${key}=${SECRET_PLACEHOLDER}`);
+  out = out.replace(OAUTH_STATE_RE, (_m, key) => `${key}=${SECRET_PLACEHOLDER}`);
+  return out;
+}
+
+/**
+ * True when, after redaction, a candidate is nothing but secret placeholders
+ * (a bare env line, a lone token, a key block) with no useful prose left. Such a
+ * candidate must never be stored as a memory.
+ */
+export function isRedactionOnly(text: string): boolean {
+  if (!text.includes(SECRET_PLACEHOLDER)) return false;
+  const stripped = text
+    .replace(/[A-Za-z][A-Za-z0-9_]*\s*[:=]\s*\[REDACTED_SECRET\]/g, ' ')
+    .split(SECRET_PLACEHOLDER)
+    .join(' ')
+    .replace(/-----(?:BEGIN|END)[^-]*-----/g, ' ');
+  return (stripped.match(/[A-Za-z]{2,}/g) || []).length === 0;
+}
+
 /** Conservative symbol-noise heuristic (used only alongside a Codex/auth signal). */
 function isHighSymbolNoise(text: string): boolean {
   const dense = text.replace(/\s/g, '');
@@ -504,8 +669,13 @@ export function cleanTranscriptForExtraction(raw: string): string {
   // Drop diff/code-noise, Clino-output, and session/status lines BEFORE unwrapping
   // so a patch line (which often ends in ";" or ",") can never be soft-joined onto
   // the prose line below it, and so spec headings reach the block pass intact.
-  const lines = redactAuthUrls(
-    redactClaudeTaskChrome(redactCodexTaskChrome(stripTerminalControlSequences(raw))),
+  // Redact secrets up front (alongside auth-URL scrubbing) so multi-line PEM
+  // private-key blocks collapse to a single placeholder before line-splitting,
+  // and so no raw secret reaches the candidate pipeline or the cleaned preview.
+  const lines = redactSecrets(
+    redactAuthUrls(
+      redactClaudeTaskChrome(redactCodexTaskChrome(stripTerminalControlSequences(raw))),
+    ),
   )
     .split('\n')
     .map(normalizeTranscriptLine)
@@ -546,8 +716,9 @@ export function cleanTranscriptForExtraction(raw: string): string {
         !isRuntimeStatusChrome(line),
     );
 
-  // Final safety pass: scrub any residual OAuth/auth query tokens.
-  return redactAuthMarkers(unwrapped.join('\n'));
+  // Final safety pass: scrub any residual OAuth/auth query tokens, then redact
+  // any secret that was reconstructed by soft-unwrapping joined lines.
+  return redactSecrets(redactAuthMarkers(unwrapped.join('\n')));
 }
 
 // ---------------------------------------------------------------------------
@@ -1654,6 +1825,9 @@ export function extractSignals(content: string): ExtractedSignals {
     ) {
       continue;
     }
+    // Sentences are already secret-redacted by cleanTranscriptForExtraction; drop
+    // any candidate that is nothing but a redacted secret (a bare env/token line).
+    if (isRedactionOnly(sentence)) continue;
     const category = classifySentence(sentence);
     if (!category) continue;
     const repaired = repairMemoryText(sentence);
@@ -1882,9 +2056,12 @@ function hasDocsSignal(text: string): boolean {
     /\b(?:docs?|documentation|markdown|code\s+fence|fenced\s+block)\b/i.test(text);
 }
 
-function extractTopics(texts: string[], limit = 6): string[] {
+function extractTopics(rawTexts: string[], limit = 6): string[] {
   const seen = new Set<string>();
   const topics: string[] = [];
+  // Drop the redaction placeholder so "REDACTED"/"SECRET" never surface as focus
+  // areas; genuine prose words (e.g. "secret detection") are still picked up.
+  const texts = rawTexts.map((t) => t.split(SECRET_PLACEHOLDER).join(' '));
 
   for (const text of texts) {
     for (const match of text.matchAll(/\b[A-Za-z0-9_-]+\.md\b/g)) {

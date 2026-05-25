@@ -606,6 +606,25 @@ By default:
 * no cloud sync is enabled
 * no telemetry is required
 
+### Secret redaction
+
+Clino redacts obvious secrets before they can be stored or shown. Detection is
+rule-based and covers common high-risk strings — API keys (`sk-…`, `ghp_…`,
+`github_pat_…`, `xox…`), JWTs, PEM private-key blocks, credentialed URLs
+(`postgres://user:pass@…`), OAuth query params, and secret-y env assignments
+(`OPENAI_API_KEY=…`, `DATABASE_URL=…`). Detected values are replaced with
+`[REDACTED_SECRET]`, keeping the surrounding context readable.
+
+Redaction applies to everything that leaves the raw transcript: cleaned
+extraction output, memory files, `clino find` / `clino inject` output, review
+candidates, and synthesized summaries. A candidate that is *only* a secret line
+is dropped entirely; a useful memory that merely mentions a secret is kept with
+the value redacted.
+
+Raw transcripts on disk are local and intentionally left unchanged. This is an
+MVP guardrail, not a guarantee — it does not yet scan or rewrite already-stored
+memory, and it is not a substitute for keeping secrets out of your terminal.
+
 Users should be able to inspect, edit, delete, and export their own memory.
 
 Sharing memory is opt-in: a project can manually export or commit curated

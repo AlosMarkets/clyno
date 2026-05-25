@@ -2277,3 +2277,180 @@ test('resolve: CLINO_HOME respected', () => {
     rmSync(work, { recursive: true, force: true });
   }
 });
+
+// ---------------------------------------------------------------------------
+// Secret redaction (extraction / review / find / inject / inspect)
+// ---------------------------------------------------------------------------
+
+const RAW_SECRET = 'sk-livesecret1234567890';
+const BUG_WITH_SECRET = `Bug: login failed because OPENAI_API_KEY=${RAW_SECRET} was missing from env.`;
+const SECRET_ONLY_TRANSCRIPT = [
+  'OPENAI_API_KEY=sk-onlysecret1234567890',
+  'GITHUB_TOKEN=ghp_onlysecret1234567890',
+  'DATABASE_URL=postgres://user:pass@example.com/db',
+  '-----BEGIN PRIVATE KEY-----',
+  'MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcw',
+  '-----END PRIVATE KEY-----',
+].join('\n');
+
+function readAllMemory(work) {
+  const memDir = join(work, '.clino', 'memory');
+  if (!existsSync(memDir)) return '';
+  return readdirSync(memDir)
+    .filter((f) => f.endsWith('.md'))
+    .map((f) => readFileSync(join(memDir, f), 'utf8'))
+    .join('\n');
+}
+
+test('run default redacts secrets in stored memory, never a raw secret', () => {
+  const work = tmp('clino-secret-run-');
+  try {
+    const run = clino(['run', 'echo', BUG_WITH_SECRET], { cwd: work });
+    assert.equal(run.code ?? 0, 0);
+
+    const memory = readAllMemory(work);
+    assert.doesNotMatch(memory, new RegExp(escapeRegExp(RAW_SECRET)));
+    assert.match(memory, /\[REDACTED_SECRET\]/);
+    // The synthesized summary must not surface the placeholder words as topics.
+    const summaries = join(work, '.clino', 'memory', 'summaries.md');
+    if (existsSync(summaries)) {
+      assert.doesNotMatch(readFileSync(summaries, 'utf8'), /REDACTED|\bSECRET\b/);
+    }
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+});
+
+test('review shows redacted candidates marked [redacted] and writes redacted memory', () => {
+  const work = tmp('clino-secret-review-');
+  try {
+    const sessionFile = writeSessionFixture(work, 'secret.md', BUG_WITH_SECRET);
+
+    const preview = clino(['review', sessionFile], { cwd: work });
+    assert.equal(preview.code ?? 0, 0);
+    assert.doesNotMatch(preview.stdout, new RegExp(escapeRegExp(RAW_SECRET)));
+    assert.match(preview.stdout, /\[REDACTED_SECRET\]/);
+    assert.match(preview.stdout, /\[redacted\]/);
+
+    const accepted = clino(['review', sessionFile, '--accept', 'all'], { cwd: work });
+    assert.equal(accepted.code ?? 0, 0);
+    assert.doesNotMatch(accepted.stdout, new RegExp(escapeRegExp(RAW_SECRET)));
+
+    const memory = readAllMemory(work);
+    assert.doesNotMatch(memory, new RegExp(escapeRegExp(RAW_SECRET)));
+    assert.match(memory, /\[REDACTED_SECRET\]/);
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+});
+
+test('review of a secret-only session offers no candidates and leaks nothing', () => {
+  const work = tmp('clino-secret-only-review-');
+  try {
+    const sessionFile = writeSessionFixture(work, 'only.md', SECRET_ONLY_TRANSCRIPT);
+    const preview = clino(['review', sessionFile], { cwd: work });
+    assert.equal(preview.code ?? 0, 0);
+    assert.match(preview.stdout, /No candidate memories found\./);
+    assert.doesNotMatch(preview.stdout, /sk-onlysecret/);
+    assert.doesNotMatch(preview.stdout, /ghp_onlysecret/);
+    assert.doesNotMatch(preview.stdout, /user:pass@/);
+    assert.doesNotMatch(preview.stdout, /MIIEvQ/);
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+});
+
+test('memory rebuild redacts secrets from session transcripts', () => {
+  const work = tmp('clino-secret-rebuild-');
+  try {
+    writeSessionFixture(work, 'rebuild-secret.md', BUG_WITH_SECRET);
+    const rebuilt = clino(['memory', 'rebuild'], { cwd: work });
+    assert.equal(rebuilt.code ?? 0, 0);
+
+    const memory = readAllMemory(work);
+    assert.doesNotMatch(memory, new RegExp(escapeRegExp(RAW_SECRET)));
+    assert.match(memory, /\[REDACTED_SECRET\]/);
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+});
+
+test('find redacts secrets that somehow live in a memory file (defense in depth)', () => {
+  const work = tmp('clino-secret-find-');
+  try {
+    const memDir = join(work, '.clino', 'memory');
+    mkdirSync(memDir, { recursive: true });
+    writeFileSync(
+      join(memDir, 'bugs.md'),
+      '---\ntype: bugs\ndate: 2026-05-25\nsource: manual\n---\n\n' +
+        `- Login failed because OPENAI_API_KEY=${RAW_SECRET} was missing.\n`,
+    );
+
+    const res = clino(['find', 'login'], { cwd: work });
+    assert.equal(res.code ?? 0, 0);
+    assert.doesNotMatch(res.stdout, new RegExp(escapeRegExp(RAW_SECRET)));
+    assert.match(res.stdout, /\[REDACTED_SECRET\]/);
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+});
+
+test('inject redacts secrets that somehow live in a memory file (defense in depth)', () => {
+  const work = tmp('clino-secret-inject-');
+  try {
+    // Plant in summaries.md: summaries bypass repairMemoryText, so only inject's
+    // final defense-in-depth scrub can catch a secret that lives there.
+    const memDir = join(work, '.clino', 'memory');
+    mkdirSync(memDir, { recursive: true });
+    writeFileSync(
+      join(memDir, 'summaries.md'),
+      '---\ntype: summaries\ndate: 2026-05-25\nsource: manual\n---\n\n' +
+        `- Login flow failed because OPENAI_API_KEY=${RAW_SECRET} was missing.\n`,
+    );
+
+    const res = clino(['inject', 'login'], { cwd: work });
+    assert.equal(res.code ?? 0, 0);
+    assert.doesNotMatch(res.stdout, new RegExp(escapeRegExp(RAW_SECRET)));
+    assert.match(res.stdout, /\[REDACTED_SECRET\]/);
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+});
+
+test('inspect --show-cleaned redacts secrets and notes raw transcripts are unchanged', () => {
+  const work = tmp('clino-secret-inspect-');
+  try {
+    const sessionFile = writeSessionFixture(work, 'inspect-secret.md', BUG_WITH_SECRET);
+    const res = clino(['inspect', sessionFile, '--show-cleaned'], { cwd: work });
+    assert.equal(res.code ?? 0, 0);
+    assert.doesNotMatch(res.stdout, new RegExp(escapeRegExp(RAW_SECRET)));
+    assert.match(res.stdout, /\[REDACTED_SECRET\]/);
+    // Raw transcript on disk is never rewritten.
+    assert.match(readFileSync(sessionFile, 'utf8'), new RegExp(escapeRegExp(RAW_SECRET)));
+    assert.match(res.stdout, /raw transcript/i);
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+});
+
+test('doctor reports the secret-redaction privacy note', () => {
+  const work = tmp('clino-secret-doctor-');
+  try {
+    const res = clino(['doctor'], { cwd: work });
+    assert.equal(res.code ?? 0, 0);
+    assert.match(res.stdout, /Secret redaction: enabled for extraction\/review\/inject output/);
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+});
+
+test('status reports the secret-redaction privacy note', () => {
+  const work = tmp('clino-secret-status-');
+  try {
+    const res = clino(['status'], { cwd: work });
+    assert.equal(res.code ?? 0, 0);
+    assert.match(res.stdout, /Secret redaction: enabled for extraction\/review\/inject output/);
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+});
