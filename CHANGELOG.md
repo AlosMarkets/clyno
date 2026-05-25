@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to Clino are documented in this file.
+All notable changes to Clyno are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
@@ -9,11 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Real PTY-backed `clino run` for wrapping terminal coding agents.
-- Project-local `.clino/` storage resolved from the Git root.
-- Private-by-default storage: `.clino/` is ignored by Git out of the box.
+- Rule-based secret redaction: obvious API keys, tokens, JWTs, PEM private-key
+  blocks, credentialed URLs, OAuth params, and secret-y env assignments are
+  replaced with `[REDACTED_SECRET]` across cleaned extraction output, memory
+  files, `clyno find`/`clyno inject` output, review candidates, and summaries.
+  Secret-only candidates are dropped; raw transcripts on disk are unchanged.
+- Real PTY-backed `clyno run` for wrapping terminal coding agents.
+- Project-local `.clyno/` storage resolved from the Git root.
+- Private-by-default storage: `.clyno/` is ignored by Git out of the box.
 - Memory extraction and transcript cleaning from captured sessions.
-- `clino find`, `clino inject`, `clino status`, and `clino doctor` commands.
+- `clyno find`, `clyno inject`, `clyno status`, and `clyno doctor` commands.
 - Resolved-memory tracking to avoid re-surfacing handled items.
-- Memory management commands: `clino memory list`, `clino memory show`,
-  and `clino memory delete`.
+- Memory management commands: `clyno memory list`, `clyno memory show`,
+  and `clyno memory delete`.

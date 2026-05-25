@@ -40,12 +40,12 @@ For now, ignore 80% of that.
 Your MVP should be brutally simple:
 
 ```txt
-clino start codex
+clyno start codex
 → captures terminal session
 → extracts useful turns/errors/decisions
-→ writes .clino/memory/*.md
-→ clino find "auth bug"
-→ clino inject "auth"
+→ writes .clyno/memory/*.md
+→ clyno find "auth bug"
+→ clyno inject "auth"
 ```
 
 That alone is valuable.
@@ -64,9 +64,9 @@ So the safe integration strategy is:
 
 ```txt
 MVP = wrapper approach
-clino codex
-clino claude
-clino aider
+clyno codex
+clyno claude
+clyno aider
 ```
 
 You spawn the agent inside your own PTY wrapper. That means you do not need special support from Codex, Claude, Aider, or Goose at first.
@@ -96,17 +96,17 @@ No desktop app yet.
 Commands:
 
 ```bash
-clino run codex
-clino run claude
-clino summarize
-clino find "redis auth bug"
-clino inject "auth-system"
+clyno run codex
+clyno run claude
+clyno summarize
+clyno find "redis auth bug"
+clyno inject "auth-system"
 ```
 
 Storage:
 
 ```txt
-.clino/
+.clyno/
   memory/
     project.md
     decisions.md
@@ -159,23 +159,23 @@ Give it this:
 ```txt
 Stop expanding the roadmap. Build the smallest vertical slice.
 
-Create a TypeScript CLI called clino with:
+Create a TypeScript CLI called clyno with:
 
-1. clino run <agent-command>
+1. clyno run <agent-command>
    - spawn the agent through node-pty
    - mirror stdin/stdout normally
-   - save raw transcript to .clino/sessions/YYYY-MM-DD-HH-mm.md
+   - save raw transcript to .clyno/sessions/YYYY-MM-DD-HH-mm.md
 
-2. clino summarize <session-file>
+2. clyno summarize <session-file>
    - rule-based extraction only
    - extract decisions, todos, bugs, errors, commands
-   - write to .clino/memory/*.md with frontmatter
+   - write to .clyno/memory/*.md with frontmatter
 
-3. clino find <query>
+3. clyno find <query>
    - use SQLite FTS5 or simple keyword search first
    - return top matching memory chunks
 
-4. clino inject <query>
+4. clyno inject <query>
    - return a compact markdown context block under 2,000 tokens
 
 Do not build GUI, embeddings, team sync, graph memory, voice, marketplace, or bandits yet.

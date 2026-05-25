@@ -1,6 +1,6 @@
-# Clino
+# Clyno
 
-Clino is a local-first memory layer for terminal-based AI coding agents.
+Clyno is a local-first memory layer for terminal-based AI coding agents.
 
 It helps developers preserve, search, and rehydrate useful project context from coding-agent sessions so they do not have to repeatedly explain the same project, decisions, bugs, and constraints every time they start a new session.
 
@@ -10,41 +10,41 @@ It helps developers preserve, search, and rehydrate useful project context from 
 
 ## Install & Develop
 
-Clino is a Node.js CLI. It requires **Node 18+** and is not yet published to npm,
+Clyno is a Node.js CLI. It requires **Node 18+** and is not yet published to npm,
 so install it from source:
 
 ```bash
 npm install      # install dependencies (also builds via the prepare script)
 npm run build    # compile TypeScript to dist/
-npm link         # symlink the `clino` binary onto your PATH
-clino --version  # verify the install
+npm link         # symlink the `clyno` binary onto your PATH
+clyno --version  # verify the install
 ```
 
-`npm link` makes the `clino` command available globally from your shell. To
-remove it later, run `npm unlink -g clino`.
+`npm link` makes the `clyno` command available globally from your shell. To
+remove it later, run `npm unlink -g clyno`.
 
 ### Usage
 
 ```bash
-clino run claude       # run a coding agent through Clino and capture the session
-clino run --review codex
-clino status           # show where memory is stored and a quick health summary
-clino find "auth"      # search stored memory
-clino inject "auth"    # print compact, relevant context for a new session
+clyno run claude       # run a coding agent through Clyno and capture the session
+clyno run --review codex
+clyno status           # show where memory is stored and a quick health summary
+clyno find "auth"      # search stored memory
+clyno inject "auth"    # print compact, relevant context for a new session
 ```
 
-> **Privacy:** `.clino/` is project-local and ignored by Git by default.
+> **Privacy:** `.clyno/` is project-local and ignored by Git by default.
 > Transcripts and memory stay on your machine unless you explicitly export them.
 
 ---
 
-## What Clino Is
+## What Clyno Is
 
-Clino is a local terminal memory tool.
+Clyno is a local terminal memory tool.
 
 It can run a user-installed coding agent inside a local terminal wrapper, capture the session output, extract useful project memories, store them locally, and later generate compact context blocks that can be searched or injected into a new session.
 
-Clino is designed for tools like:
+Clyno is designed for tools like:
 
 - Codex CLI
 - Claude Code
@@ -60,15 +60,15 @@ capture → summarize → store → search → inject
 
 ---
 
-## What Clino Is Not
+## What Clyno Is Not
 
-Clino is not an AI model provider.
+Clyno is not an AI model provider.
 
-Clino does not give users access to Claude, OpenAI, or any other model provider.
+Clyno does not give users access to Claude, OpenAI, or any other model provider.
 
-Clino is not a proxy, subscription bypass, automation farm, hosted agent platform, or replacement for official APIs.
+Clyno is not a proxy, subscription bypass, automation farm, hosted agent platform, or replacement for official APIs.
 
-Clino does not:
+Clyno does not:
 
 * provide model access
 * sell access to third-party subscriptions
@@ -78,14 +78,14 @@ Clino does not:
 * extract provider credentials
 * store OAuth/session tokens
 * call private provider APIs
-* run Claude Code, Codex, or other agents on Clino-owned servers
+* run Claude Code, Codex, or other agents on Clyno-owned servers
 * turn subscription CLI tools into hosted API backends
 
 Users must install and authenticate with their own coding tools normally.
 
 ---
 
-## Why Clino Exists
+## Why Clyno Exists
 
 AI coding agents are powerful, but their sessions are often temporary.
 
@@ -111,7 +111,7 @@ Existing approaches usually involve:
 * relying on agent-specific memory
 * wasting tokens on irrelevant context
 
-Clino solves this by turning coding sessions into structured, searchable, local project memory.
+Clyno solves this by turning coding sessions into structured, searchable, local project memory.
 
 ---
 
@@ -143,20 +143,20 @@ This causes:
 
 ---
 
-## The Clino Approach
+## The Clyno Approach
 
-Clino separates long-term memory from active context.
+Clyno separates long-term memory from active context.
 
 The agent context window should be treated like working memory.
 
-Clino’s local memory store acts like project memory on disk.
+Clyno’s local memory store acts like project memory on disk.
 
-Instead of injecting an entire transcript, Clino retrieves only the relevant memories for the current task.
+Instead of injecting an entire transcript, Clyno retrieves only the relevant memories for the current task.
 
 Example:
 
 ```bash
-clino inject auth
+clyno inject auth
 ```
 
 Might return:
@@ -186,7 +186,7 @@ The result is compact, relevant context instead of a giant history dump.
 
 Current MVP goals:
 
-* Run a terminal coding agent through Clino
+* Run a terminal coding agent through Clyno
 * Capture session transcripts locally
 * Extract useful memories from sessions
 * Store memories as markdown files
@@ -200,16 +200,16 @@ Current MVP goals:
 
 ## Example Commands
 
-Run an agent through Clino:
+Run an agent through Clyno:
 
 ```bash
-clino run claude
+clyno run claude
 ```
 
-Run another command through Clino:
+Run another command through Clyno:
 
 ```bash
-clino run codex
+clyno run codex
 ```
 
 Memory write modes:
@@ -221,138 +221,138 @@ Memory write modes:
 Recommended dogfood flow:
 
 ```bash
-clino run --review codex
-clino review latest
-clino review latest --accept all
+clyno run --review codex
+clyno review latest
+clyno review latest --accept all
 ```
 
 Show CLI help or version:
 
 ```bash
-clino help
-clino --version
+clyno help
+clyno --version
 ```
 
 Search memory:
 
 ```bash
-clino find "redis auth bug"
+clyno find "redis auth bug"
 ```
 
 Inject relevant context:
 
 ```bash
-clino inject "auth"
+clyno inject "auth"
 ```
 
 Summarize a saved session:
 
 ```bash
-clino summarize .clino/sessions/2026-05-24-20-30-00.md
+clyno summarize .clyno/sessions/2026-05-24-20-30-00.md
 ```
 
 Debug extraction quality without writing memory:
 
 ```bash
-clino inspect latest
-clino summarize --dry-run .clino/sessions/2026-05-24-20-30-00.md
-clino summarize --show-cleaned .clino/sessions/2026-05-24-20-30-00.md
+clyno inspect latest
+clyno summarize --dry-run .clyno/sessions/2026-05-24-20-30-00.md
+clyno summarize --show-cleaned .clyno/sessions/2026-05-24-20-30-00.md
 ```
 
-`clino inspect` shows the raw transcript path, file metadata, a cleaned-text
-preview, and extraction counts. `clino summarize --dry-run` shows the candidate
+`clyno inspect` shows the raw transcript path, file metadata, a cleaned-text
+preview, and extraction counts. `clyno summarize --dry-run` shows the candidate
 memories and final memory files that would be written without modifying
-`.clino/memory`. Add `--show-cleaned` to print the cleaned transcript text used
+`.clyno/memory`. Add `--show-cleaned` to print the cleaned transcript text used
 for extraction; use `--max-chars <n>` to limit large transcripts.
 
 Review before writing memory:
 
 ```bash
-clino review latest
-clino review latest --accept all
-clino review latest --skip
-clino review .clino/sessions/<file>.md --accept decision-1,todo-1
-clino review .clino/sessions/<file>.md --skip
+clyno review latest
+clyno review latest --accept all
+clyno review latest --skip
+clyno review .clyno/sessions/<file>.md --accept decision-1,todo-1
+clyno review .clyno/sessions/<file>.md --skip
 ```
 
-`clino review` runs the same extraction pipeline as `summarize`, shows
+`clyno review` runs the same extraction pipeline as `summarize`, shows
 deterministic candidate IDs, and is read-only unless `--accept` or `--skip` is
 provided. Use `--accept all` to write every candidate or pass a comma-separated ID
 list to write only selected memories. Add `--no-summary` with `--accept all` to
 skip the synthesized summary.
 
-`clino review latest` selects the newest **pending** session (one without a marker
-in `.clino/reviews/`), not simply the newest transcript file. If every session is
+`clyno review latest` selects the newest **pending** session (one without a marker
+in `.clyno/reviews/`), not simply the newest transcript file. If every session is
 already reviewed or skipped, it prints `No pending review sessions.` and exits 0.
 
-Zero-candidate sessions can still be closed out: `clino review latest --accept all`
+Zero-candidate sessions can still be closed out: `clyno review latest --accept all`
 creates a reviewed marker, writes no memory, and prints `Marked session as reviewed.`
 Use `--skip` to mark a session reviewed without writing memory when you do not want
 to accept any candidates.
 
-Explicit `clino review <session-file>` still works for any transcript path, even if
+Explicit `clyno review <session-file>` still works for any transcript path, even if
 that session already has a reviewed or skipped marker.
 
 Review tracking:
 
-- `clino review pending` lists sessions without a marker in `.clino/reviews/`.
-- Reviewed or skipped sessions get a local marker under `.clino/reviews/`.
+- `clyno review pending` lists sessions without a marker in `.clyno/reviews/`.
+- Reviewed or skipped sessions get a local marker under `.clyno/reviews/`.
 - Raw sessions remain untouched.
 
 Manage stored memory:
 
 ```bash
-clino memory list
-clino memory show <id>
-clino memory delete <id>
-clino memory delete <id> --dry-run
+clyno memory list
+clyno memory show <id>
+clyno memory delete <id>
+clyno memory delete <id> --dry-run
 ```
 
 Memory IDs are human-readable display IDs like `decision-1`, `todo-1`, and
 `bug-1`. Memory IDs are display IDs generated from the current list; run
-`clino memory list` before resolving or deleting to see current IDs. Memory
+`clyno memory list` before resolving or deleting to see current IDs. Memory
 management is local and private: listing and showing memories does not create
-`.clino/`, and deletion only edits the selected markdown memory item, not raw
+`.clyno/`, and deletion only edits the selected markdown memory item, not raw
 session transcripts.
 
 Memory rebuild:
 
 ```bash
-clino memory rebuild --dry-run
-clino memory rebuild
+clyno memory rebuild --dry-run
+clyno memory rebuild
 ```
 
-Use rebuild after Clino's extraction filters improve and older `.clino/memory`
+Use rebuild after Clyno's extraction filters improve and older `.clyno/memory`
 files contain stale noisy memories. The dry run reads all raw transcripts in
-`.clino/sessions`, shows the memory that would be produced, and does not modify
+`.clyno/sessions`, shows the memory that would be produced, and does not modify
 files. A real rebuild leaves raw sessions untouched, backs up the old memory to
-`.clino/backups/memory-YYYY-MM-DDTHH-mm-ss/`, then replaces `.clino/memory`
+`.clyno/backups/memory-YYYY-MM-DDTHH-mm-ss/`, then replaces `.clyno/memory`
 using the current extraction logic.
 
 Check where memory is stored and a quick health summary:
 
 ```bash
-clino status
+clyno status
 ```
 
 Diagnose local setup, storage, and runtime checks:
 
 ```bash
-clino doctor
+clyno doctor
 ```
 
 Example output:
 
 ```txt
-Clino doctor
+Clyno doctor
 
-Version: clino 0.1.0
+Version: clyno 0.1.0
 Node: v22.x.x
 Platform: linux x64
 CWD: /home/you/project
 
 Storage:
-- Home: /home/you/project/.clino
+- Home: /home/you/project/.clyno
 - Mode: project-local Git root
 - Git repo: yes
 - Git ignored: yes
@@ -371,11 +371,11 @@ Warnings:
 Example output:
 
 ```txt
-Clino status
+Clyno status
 
-Home: /home/you/project/.clino
+Home: /home/you/project/.clyno
 Storage mode: project-local
-CLINO_HOME override: not set
+CLYNO_HOME override: not set
 Git repo: yes
 Git ignored: yes
 
@@ -388,49 +388,49 @@ Memory files: 3
 - summaries: 1
 
 Try:
-- clino find "auth"
-- clino inject "storage"
-- clino run claude
+- clyno find "auth"
+- clyno inject "storage"
+- clyno run claude
 ```
 
-`clino status` is read-only — it never creates `.clino/` or any memory file, so
+`clyno status` is read-only — it never creates `.clyno/` or any memory file, so
 you can run it in a fresh project to see the resolved path and zero counts.
 
 ### Resolving stale memory
 
 ```bash
-clino resolve todo-1
-clino resolve bug-1
-clino resolve "clino status command"
+clyno resolve todo-1
+clyno resolve bug-1
+clyno resolve "clyno status command"
 ```
 
-Mark an open TODO or bug as completed. When you `clino resolve <id>`, Clino:
+Mark an open TODO or bug as completed. When you `clyno resolve <id>`, Clyno:
 - Creates a resolved memory entry preserving the original text
-- Suppresses the open item from `clino inject` output (shows it under Recently Resolved instead)
+- Suppresses the open item from `clyno inject` output (shows it under Recently Resolved instead)
 - Keeps the original TODO/bug in place — nothing is deleted
 
-Resolved items are also matched by text. The command `clino resolve "status command"` creates a resolved marker that suppresses any open TODO containing those keywords.
+Resolved items are also matched by text. The command `clyno resolve "status command"` creates a resolved marker that suppresses any open TODO containing those keywords.
 
 Example:
 ```txt
-$ clino resolve todo-1
+$ clyno resolve todo-1
 Resolved todo-1:
-  Add clino status command.
+  Add clyno status command.
 
 Created resolved memory:
-  Resolved: Add clino status command.
+  Resolved: Add clyno status command.
 ```
 
 ---
 
 ## Local Storage
 
-Clino stores project memory locally.
+Clyno stores project memory locally.
 
 Example structure:
 
 ```txt
-.clino/
+.clyno/
   sessions/
     2026-05-24-20-30-00.md
   memory/
@@ -442,35 +442,35 @@ Example structure:
     summaries.md
 ```
 
-Raw transcripts live in `.clino/sessions`.
+Raw transcripts live in `.clyno/sessions`.
 
-Extracted project memory lives in `.clino/memory`.
+Extracted project memory lives in `.clyno/memory`.
 
 Search is currently keyword-based over these markdown files — there is no
 database or index on disk in the MVP. (A future SQLite/FTS index is on the
 roadmap; see ROADMAP.md.)
 
-`.clino/` is **ignored by Git by default** for privacy — transcripts and memory
+`.clyno/` is **ignored by Git by default** for privacy — transcripts and memory
 stay on your machine and are never committed. You can choose
 to export or curate-and-commit selected memory later (e.g. `git add -f` on a
 specific file), but that is an explicit, manual choice and not the MVP default.
 
 Storage is **project-local by default** so memory never leaks between unrelated
-projects. The Clino home directory is resolved in this order:
+projects. The Clyno home directory is resolved in this order:
 
-1. `CLINO_HOME`, if set — used exactly as given.
-2. `<git-root>/.clino`, when run inside a Git repository (found by walking up for `.git`).
-3. `<cwd>/.clino` otherwise.
+1. `CLYNO_HOME`, if set — used exactly as given.
+2. `<git-root>/.clyno`, when run inside a Git repository (found by walking up for `.git`).
+3. `<cwd>/.clyno` otherwise.
 
 All commands (`run`, `inspect`, `review`, `summarize`, `memory`, `find`, `inject`, `status`, `doctor`) share this resolved home.
-`~/.clino` is no longer used for project memory; it may be reserved for global
+`~/.clyno` is no longer used for project memory; it may be reserved for global
 config later.
 
 ---
 
 ## Memory Types
 
-Clino extracts and stores useful signals such as:
+Clyno extracts and stores useful signals such as:
 
 ### Decisions
 
@@ -536,7 +536,7 @@ Auth work currently centers on JWT authentication, Redis blacklist handling, and
 
 ## Memory Quality Rules
 
-Clino memory should be compact, useful, and deduplicated.
+Clyno memory should be compact, useful, and deduplicated.
 
 It should avoid storing repeated raw sentences.
 
@@ -554,7 +554,7 @@ Decision: Use JWT auth.
 Open Bug / TODO: Fix Redis blacklist bug.
 ```
 
-Clino should split compound statements into separate memories when they contain different signals.
+Clyno should split compound statements into separate memories when they contain different signals.
 
 The same memory should not appear repeatedly in one memory file or one injected context block.
 
@@ -572,7 +572,7 @@ Injected context should be:
 * date-aware when possible
 * small enough to avoid wasting tokens
 
-Clino should not dump the full memory folder into an agent session.
+Clyno should not dump the full memory folder into an agent session.
 
 Default limits:
 
@@ -593,12 +593,12 @@ Ranking should prefer:
 
 ## Privacy Model
 
-Clino is local-first.
+Clyno is local-first.
 
 By default:
 
-* project memory is stored locally under the project `.clino/`
-* the entire `.clino/` directory is ignored by Git by default for privacy
+* project memory is stored locally under the project `.clyno/`
+* the entire `.clyno/` directory is ignored by Git by default for privacy
 * transcripts stay on the user’s machine
 * memories stay on the user’s machine
 * indexes stay on the user’s machine
@@ -608,7 +608,7 @@ By default:
 
 ### Secret redaction
 
-Clino redacts obvious secrets before they can be stored or shown. Detection is
+Clyno redacts obvious secrets before they can be stored or shown. Detection is
 rule-based and covers common high-risk strings — API keys (`sk-…`, `ghp_…`,
 `github_pat_…`, `xox…`), JWTs, PEM private-key blocks, credentialed URLs
 (`postgres://user:pass@…`), OAuth query params, and secret-y env assignments
@@ -616,7 +616,7 @@ rule-based and covers common high-risk strings — API keys (`sk-…`, `ghp_…`
 `[REDACTED_SECRET]`, keeping the surrounding context readable.
 
 Redaction applies to everything that leaves the raw transcript: cleaned
-extraction output, memory files, `clino find` / `clino inject` output, review
+extraction output, memory files, `clyno find` / `clyno inject` output, review
 candidates, and synthesized summaries. A candidate that is *only* a secret line
 is dropped entirely; a useful memory that merely mentions a secret is kept with
 the value redacted.
@@ -629,7 +629,7 @@ Users should be able to inspect, edit, delete, and export their own memory.
 
 Sharing memory is opt-in: a project can manually export or commit curated
 memory files later, but committing memory is not the MVP default. (A convenience
-command such as `clino init --track-memory` may be added in the future; it does
+command such as `clyno init --track-memory` may be added in the future; it does
 not exist today.)
 
 Cloud features, team sync, or sharing features should only exist as explicit opt-in features in the future.
@@ -638,20 +638,20 @@ Cloud features, team sync, or sharing features should only exist as explicit opt
 
 ## Provider Compatibility
 
-Clino treats coding agents as external user-installed tools.
+Clyno treats coding agents as external user-installed tools.
 
 The safe integration model is:
 
 ```txt
 User installs the coding agent
 User authenticates with the provider normally
-User runs the agent locally through Clino
-Clino observes local terminal I/O
-Clino stores local memory
+User runs the agent locally through Clyno
+Clyno observes local terminal I/O
+Clyno stores local memory
 User remains responsible for provider terms
 ```
 
-Clino should use documented integration methods where available.
+Clyno should use documented integration methods where available.
 
 Preferred methods:
 
@@ -675,11 +675,11 @@ Avoid:
 
 ## Legal / Terms Note
 
-Clino does not provide access to any AI model, coding agent, or subscription service.
+Clyno does not provide access to any AI model, coding agent, or subscription service.
 
-Users are responsible for complying with the terms of the tools they run through Clino.
+Users are responsible for complying with the terms of the tools they run through Clyno.
 
-Clino is intended to record and organize terminal output visible to the user. It is not intended to bypass limits, automate account sharing, extract credentials, proxy requests, or provide model access.
+Clyno is intended to record and organize terminal output visible to the user. It is not intended to bypass limits, automate account sharing, extract credentials, proxy requests, or provide model access.
 
 ---
 
@@ -727,7 +727,7 @@ Near-term priorities:
 1. Improve memory deduplication
 2. Improve classification
 3. Split compound memories into clean signals
-4. Improve `clino inject` formatting
+4. Improve `clyno inject` formatting
 5. Add injection limits
 6. Add tests for extraction and injection quality
 7. Replace placeholder process spawning with proper PTY support
@@ -737,7 +737,7 @@ Near-term priorities:
 
 ## Non-Goals
 
-Clino is not trying to be:
+Clyno is not trying to be:
 
 * a general AI chatbot
 * a model router
@@ -749,7 +749,7 @@ Clino is not trying to be:
 * a replacement for Git
 * a replacement for official provider tools
 
-Clino’s job is narrower:
+Clyno’s job is narrower:
 
 > preserve useful project memory from terminal coding-agent sessions and make it easy to reuse later.
 
@@ -757,16 +757,16 @@ Clino’s job is narrower:
 
 ## Success Criteria
 
-Clino is working if this loop feels reliable:
+Clyno is working if this loop feels reliable:
 
 ```txt
-A developer runs a coding agent through Clino.
-Clino captures the session without breaking the terminal.
-Clino extracts useful project memory.
+A developer runs a coding agent through Clyno.
+Clyno captures the session without breaking the terminal.
+Clyno extracts useful project memory.
 The developer closes the session.
 The developer comes back later.
 The developer searches for relevant memory.
-Clino returns the right decisions, bugs, TODOs, and summaries.
+Clyno returns the right decisions, bugs, TODOs, and summaries.
 The developer injects compact context into a new agent session.
 The agent continues with enough context to be useful.
 ```
@@ -777,7 +777,7 @@ If this loop is not excellent, do not add more features.
 
 ## North Star
 
-Clino exists to help developers avoid repeating themselves.
+Clyno exists to help developers avoid repeating themselves.
 
 The product promise is:
 

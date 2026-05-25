@@ -1,4 +1,4 @@
-# Clino: Core Components & Tech Stack Outline
+# Clyno: Core Components & Tech Stack Outline
 
 ## Core Components
 
@@ -90,7 +90,7 @@
 - Generate concise context summary for agent injection
 - Format output as markdown or plain text suitable for context window
 - Support different injection methods: environment variable, temp file, STDIN prefix
-- Provide on-demand retrieval via CLI (`clino find "query"`)
+- Provide on-demand retrieval via CLI (`clyno find "query"`)
 - Enable manual memory browsing/viewing
 
 **Rehydration Formats**:

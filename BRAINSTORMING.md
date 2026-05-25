@@ -1,4 +1,4 @@
-# Clino: Brainstorming & Advanced Concepts
+# Clyno: Brainstorming & Advanced Concepts
 
 ## Advanced Retrieval Techniques
 
@@ -42,13 +42,13 @@ Build a knowledge graph from memories:
 - **Environment Variables**: `CODEX_MEMORY_FILE` or `CODEX_CONTEXT_PROVIDER`
 - **Hook Scripts**: `~/.codex/hooks/pre-session.sh` that outputs memory to STDOUT
 - **Config File**: Modify `~/.codex/config.json` to include memory prefix
-- **STDIN Prefix**: Most reliable - have clino wrap codex command and prefix context
+- **STDIN Prefix**: Most reliable - have clyno wrap codex command and prefix context
 - Official docs: https://openai.com/blog/codex-cli (look for configuration section)
 
 ### Claude Code Integration
 - **Slash Commands**: If Claude Code supports custom `/memory load` command
 - **Context Files**: Look for `CLAUDE_CONTEXT_FILE` or similar
-- **Proxy Approach**: Have clino start a local server that Claude Code connects to for context
+- **Proxy Approach**: Have clyno start a local server that Claude Code connects to for context
 - **Official docs**: https://docs.anthropic.com/en/docs/claude-code (check for context/injection features)
 
 ### Aider Integration

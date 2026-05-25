@@ -65,18 +65,18 @@ function findGitRoot(start: string): string | null {
 }
 
 /**
- * Resolve the directory that holds all Clino state (sessions + memory).
+ * Resolve the directory that holds all Clyno state (sessions + memory).
  *
  * Resolution order:
- *   1. CLINO_HOME env var, if set — used exactly as given.
- *   2. <git-root>/.clino, when run inside a Git working tree.
- *   3. <cwd>/.clino otherwise.
+ *   1. CLYNO_HOME env var, if set — used exactly as given.
+ *   2. <git-root>/.clyno, when run inside a Git working tree.
+ *   3. <cwd>/.clyno otherwise.
  *
  * Storage is project-local by default so memory never leaks between unrelated
- * projects. ~/.clino (os.homedir) is intentionally no longer used for project
+ * projects. ~/.clyno (os.homedir) is intentionally no longer used for project
  * memory; it may be reserved for global config in the future.
  */
-interface ClinoStorage {
+interface ClynoStorage {
   home: string;
   sessionsDir: string;
   memoryDir: string;
@@ -84,15 +84,15 @@ interface ClinoStorage {
   processedSessionsFile: string;
   gitRoot: string | null;
   overrideActive: boolean;
-  mode: 'CLINO_HOME override' | 'project-local Git root' | 'cwd fallback';
+  mode: 'CLYNO_HOME override' | 'project-local Git root' | 'cwd fallback';
 }
 
-function resolveClinoStorage(): ClinoStorage {
-  const overrideActive = Boolean(process.env.CLINO_HOME);
+function resolveClynoStorage(): ClynoStorage {
+  const overrideActive = Boolean(process.env.CLYNO_HOME);
   const gitRoot = findGitRoot(process.cwd());
-  const home = overrideActive ? process.env.CLINO_HOME! : join(gitRoot ?? process.cwd(), '.clino');
+  const home = overrideActive ? process.env.CLYNO_HOME! : join(gitRoot ?? process.cwd(), '.clyno');
   const mode = overrideActive
-    ? 'CLINO_HOME override'
+    ? 'CLYNO_HOME override'
     : gitRoot
       ? 'project-local Git root'
       : 'cwd fallback';
@@ -110,8 +110,8 @@ function resolveClinoStorage(): ClinoStorage {
 }
 
 // Configuration. All commands read and write through this single resolved home.
-const STORAGE = resolveClinoStorage();
-const CLINO_DIR = STORAGE.home;
+const STORAGE = resolveClynoStorage();
+const CLYNO_DIR = STORAGE.home;
 const SESSIONS_DIR = STORAGE.sessionsDir;
 const MEMORY_DIR = STORAGE.memoryDir;
 const REVIEWS_DIR = STORAGE.reviewsDir;
@@ -132,12 +132,12 @@ function readPackageInfo(): PackageInfo | null {
   }
 }
 
-function clinoVersion(): string {
+function clynoVersion(): string {
   return readPackageInfo()?.version ?? '0.0.0';
 }
 
 function printVersion(): void {
-  console.log(`clino ${clinoVersion()}`);
+  console.log(`clyno ${clynoVersion()}`);
 }
 
 function loadNodePty(): NodePtyModule {
@@ -155,28 +155,28 @@ function nodePtyStatus(): { ok: boolean; message?: string } {
   }
 }
 
-const HELP_TEXT = `Clino — local memory for terminal coding agents
+const HELP_TEXT = `Clyno — local memory for terminal coding agents
 
 Usage:
-  clino run [--review|--no-memory] <command> [args...]
-  clino inspect latest [--show-cleaned] [--max-chars <n>]
-  clino inspect <session-file> [--show-cleaned] [--max-chars <n>]
-  clino review pending
-  clino review latest [--accept all|<ids>] [--no-summary] [--include-suspicious] [--skip]
-  clino review <session-file> [--accept all|<ids>] [--no-summary] [--include-suspicious] [--skip]
-  clino summarize [--dry-run] [--show-cleaned] [--max-chars <n>] <session-file>
-  clino memory list [--type <type>] [--include-resolved]
-  clino memory show <id>
-  clino memory delete <id> [--dry-run]
-  clino memory rebuild [--dry-run]
-  clino find <query>
-  clino inject <query>
-  clino resolve <id>
-  clino resolve <query>
-  clino status
-  clino doctor
-  clino --version
-  clino help
+  clyno run [--review|--no-memory] <command> [args...]
+  clyno inspect latest [--show-cleaned] [--max-chars <n>]
+  clyno inspect <session-file> [--show-cleaned] [--max-chars <n>]
+  clyno review pending
+  clyno review latest [--accept all|<ids>] [--no-summary] [--include-suspicious] [--skip]
+  clyno review <session-file> [--accept all|<ids>] [--no-summary] [--include-suspicious] [--skip]
+  clyno summarize [--dry-run] [--show-cleaned] [--max-chars <n>] <session-file>
+  clyno memory list [--type <type>] [--include-resolved]
+  clyno memory show <id>
+  clyno memory delete <id> [--dry-run]
+  clyno memory rebuild [--dry-run]
+  clyno find <query>
+  clyno inject <query>
+  clyno resolve <id>
+  clyno resolve <query>
+  clyno status
+  clyno doctor
+  clyno --version
+  clyno help
 
 Flags:
   -h, --help       Show help
@@ -188,42 +188,42 @@ Run memory modes:
   --no-memory   Save transcript only, skipping extraction
 
 Examples:
-  clino run claude
-  clino run --review claude
-  clino run --no-memory codex
-  clino inspect latest
-  clino review pending
-  clino review latest
-  clino review latest --accept all
-  clino review latest --skip
-  clino summarize --dry-run .clino/sessions/2026-05-24-20-30-00.md
-  clino memory list
-  clino memory show decision-1
-  clino memory rebuild --dry-run
-  clino find "auth bug"
-  clino inject "storage"
-  clino resolve todo-1
-  clino resolve "clino status command"
-  clino status
+  clyno run claude
+  clyno run --review claude
+  clyno run --no-memory codex
+  clyno inspect latest
+  clyno review pending
+  clyno review latest
+  clyno review latest --accept all
+  clyno review latest --skip
+  clyno summarize --dry-run .clyno/sessions/2026-05-24-20-30-00.md
+  clyno memory list
+  clyno memory show decision-1
+  clyno memory rebuild --dry-run
+  clyno find "auth bug"
+  clyno inject "storage"
+  clyno resolve todo-1
+  clyno resolve "clyno status command"
+  clyno status
 
 Storage:
-  Uses project-local .clino/ by default.
-  CLINO_HOME can override storage location.
+  Uses project-local .clyno/ by default.
+  CLYNO_HOME can override storage location.
 
 Privacy:
-  .clino/ is ignored by Git by default.`;
+  .clyno/ is ignored by Git by default.`;
 
 function printHelp(): void {
   console.log(HELP_TEXT);
 }
 
 /**
- * Create the Clino state directories on demand. Only the writing commands
+ * Create the Clyno state directories on demand. Only the writing commands
  * (`run`, `summarize`) call this; read-only commands (`status`, `doctor`,
- * `find`, `inject`) never create `.clino/` just to inspect or report on it.
+ * `find`, `inject`) never create `.clyno/` just to inspect or report on it.
  */
-function ensureClinoDirs(): void {
-  [CLINO_DIR, SESSIONS_DIR, MEMORY_DIR].forEach((dir) => {
+function ensureClynoDirs(): void {
+  [CLYNO_DIR, SESSIONS_DIR, MEMORY_DIR].forEach((dir) => {
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   });
 }
@@ -264,7 +264,7 @@ interface ParsedRunArgs {
   args: string[];
 }
 
-const RUN_USAGE = 'Usage: clino run [--review|--no-memory] <command> [args...]';
+const RUN_USAGE = 'Usage: clyno run [--review|--no-memory] <command> [args...]';
 
 function insightCountsFromReport(report: ExtractionReport): InsightCounts {
   return {
@@ -327,7 +327,7 @@ function parseRunArgs(args: string[]): ParsedRunArgs | null {
  * Run a command through a real PTY, wiring it to the parent terminal so the
  * child behaves exactly as if launched directly: colors, prompts, raw keystrokes
  * (arrows, Ctrl+C), and window resizes all pass through. The full byte stream is
- * captured for the session transcript. No Clino output is written while the child
+ * captured for the session transcript. No Clyno output is written while the child
  * is running — a single summary line is printed only after it exits.
  *
  * Resolves with the child's exit code so the caller can mirror it.
@@ -346,7 +346,7 @@ function runCommand(
 
     if (!ptyStatus.ok) {
       process.stderr.write(
-        `clino: node-pty could not be loaded${ptyStatus.message ? `: ${ptyStatus.message}` : ''}\n`,
+        `clyno: node-pty could not be loaded${ptyStatus.message ? `: ${ptyStatus.message}` : ''}\n`,
       );
       resolve(1);
       return;
@@ -363,7 +363,7 @@ function runCommand(
       });
     } catch (err) {
       // Typically ENOENT: the command isn't on PATH. Mirror the shell's 127.
-      process.stderr.write(`clino: cannot run '${agentCmd}': ${(err as Error).message}\n`);
+      process.stderr.write(`clyno: cannot run '${agentCmd}': ${(err as Error).message}\n`);
       resolve(127);
       return;
     }
@@ -465,7 +465,7 @@ function finalizeSession(
   signal?: number,
   memoryMode: RunMemoryMode = 'auto',
 ): void {
-  ensureClinoDirs();
+  ensureClynoDirs();
   const endedAt = new Date();
   const timestamp = startedAt.toISOString().replace(/[:.]/g, '-');
   const sessionFile = join(SESSIONS_DIR, `${timestamp}.md`);
@@ -483,8 +483,8 @@ function finalizeSession(
 
   if (memoryMode === 'none') {
     process.stdout.write(
-      `\n[clino] session saved → ${sessionFile}\n` +
-        '[clino] memory extraction skipped (--no-memory)\n',
+      `\n[clyno] session saved → ${sessionFile}\n` +
+        '[clyno] memory extraction skipped (--no-memory)\n',
     );
     return;
   }
@@ -493,12 +493,12 @@ function finalizeSession(
     const report = buildExtractionReport(sessionFile);
     const counts = insightCountsFromReport(report);
     process.stdout.write(
-      `\n[clino] session saved → ${sessionFile}\n` +
-        '[clino] review mode: memory was not written\n' +
-        `[clino] candidates: ${formatInsightCountsInline(counts)}\n` +
-        '[clino] review with:\n' +
-        '  clino review latest\n' +
-        `  clino review ${sessionFile}\n`,
+      `\n[clyno] session saved → ${sessionFile}\n` +
+        '[clyno] review mode: memory was not written\n' +
+        `[clyno] candidates: ${formatInsightCountsInline(counts)}\n` +
+        '[clyno] review with:\n' +
+        '  clyno review latest\n' +
+        `  clyno review ${sessionFile}\n`,
     );
     return;
   }
@@ -512,15 +512,15 @@ function finalizeSession(
 
   // The single, simple post-session message (requirement: nothing during run).
   process.stdout.write(
-    `\n[clino] session saved → ${sessionFile}\n` +
-      `[clino] learned ${formatInsightCountsInline(counts)}\n`,
+    `\n[clyno] session saved → ${sessionFile}\n` +
+      `[clyno] learned ${formatInsightCountsInline(counts)}\n`,
   );
 }
 
 /**
  * Extract insights from a session file and persist them as clean memories.
  * Returns the per-category counts. Pass `quiet` to suppress progress logging
- * (used by `clino run`, which prints its own single post-session summary).
+ * (used by `clyno run`, which prints its own single post-session summary).
  */
 function extractInsights(
   sessionFilePath: string,
@@ -528,7 +528,7 @@ function extractInsights(
 ): InsightCounts {
   if (!opts.quiet) console.log('🔍 Extracting insights from session...');
 
-  ensureClinoDirs();
+  ensureClynoDirs();
   const report = buildExtractionReport(sessionFilePath);
   const signals = report.signals;
 
@@ -707,7 +707,7 @@ function printNoPendingReviewSessions(): number {
   console.log('No pending review sessions.');
   console.log('');
   console.log('Suggest:');
-  console.log('  clino review pending');
+  console.log('  clyno review pending');
   return 0;
 }
 
@@ -890,7 +890,7 @@ function resolveSessionArg(sessionArg: string): string {
 }
 
 function printInspect(args: string[]): number {
-  const usage = 'Usage: clino inspect <latest|session-file> [--show-cleaned] [--max-chars <n>]';
+  const usage = 'Usage: clyno inspect <latest|session-file> [--show-cleaned] [--max-chars <n>]';
   const parsed = parseDebugArgs(args, usage, false);
   if (!parsed) return 1;
   if (parsed.positionals.length !== 1) {
@@ -921,7 +921,7 @@ function printInspect(args: string[]): number {
 
   const preview = truncateText(report.cleanedText || '(empty)', CLEANED_PREVIEW_CHARS);
   const lines = [
-    'Clino inspect',
+    'Clyno inspect',
     '',
     `File: ${report.sessionFilePath}`,
     `Size: ${report.fileSizeBytes} bytes`,
@@ -945,7 +945,7 @@ function printInspect(args: string[]): number {
 }
 
 function printSummarize(args: string[]): number {
-  const usage = 'Usage: clino summarize [--dry-run] [--show-cleaned] [--max-chars <n>] <session-file>';
+  const usage = 'Usage: clyno summarize [--dry-run] [--show-cleaned] [--max-chars <n>] <session-file>';
   const parsed = parseDebugArgs(args, usage, true);
   if (!parsed) return 1;
   if (parsed.positionals.length !== 1) {
@@ -977,7 +977,7 @@ function printSummarize(args: string[]): number {
   }
 
   const lines = [
-    'Clino summarize dry run',
+    'Clyno summarize dry run',
     '',
     `File: ${report.sessionFilePath}`,
     'No memory files were written.',
@@ -1192,7 +1192,7 @@ function generateContext(query: string, maxChars = 3000): string {
     const title = FILE_TITLES[key] || key;
 
     // Re-apply the quality/dedupe layer at inject time (defense in depth).
-    // Summaries are already synthesized text and intentionally match the Clino
+    // Summaries are already synthesized text and intentionally match the Clyno
     // output-noise guard used by extraction, so they must not be repaired again.
     let items = key === 'summaries'
       ? dedupeMemories(result.matches.map((m) => m.replace(/^[-*]\s+/, '').trim()).filter(Boolean))
@@ -1496,7 +1496,7 @@ interface ReviewCandidate {
 }
 
 const REVIEW_USAGE =
-  'Usage: clino review <latest|session-file> [--accept all|<ids>] [--no-summary] [--include-suspicious] [--skip]';
+  'Usage: clyno review <latest|session-file> [--accept all|<ids>] [--no-summary] [--include-suspicious] [--skip]';
 
 const REVIEW_BUCKETS: Array<{ category: MemoryType; displayType: MemoryDisplayType }> = [
   { category: 'decisions', displayType: 'decision' },
@@ -1626,7 +1626,7 @@ function formatReviewPreview(
   targetArg: string,
 ): string[] {
   const lines = [
-    'Clino review',
+    'Clyno review',
     '',
     `Session: ${report.sessionFilePath}`,
     '',
@@ -1641,19 +1641,19 @@ function formatReviewPreview(
     lines.push(
       '',
       'To write all candidates:',
-      `  clino review ${targetArg} --accept all`,
+      `  clyno review ${targetArg} --accept all`,
     );
     if (suspiciousCount > 0) {
       lines.push(
         '',
         `${suspiciousCount} candidate${suspiciousCount === 1 ? '' : 's'} marked [suspicious] — skipped by --accept all unless you pass --include-suspicious.`,
-        `  clino review ${targetArg} --accept all --include-suspicious`,
+        `  clyno review ${targetArg} --accept all --include-suspicious`,
       );
     }
     lines.push(
       '',
       'To write selected candidates:',
-      `  clino review ${targetArg} --accept ${selectedExample}`,
+      `  clyno review ${targetArg} --accept ${selectedExample}`,
     );
   }
 
@@ -1725,7 +1725,7 @@ function writeReviewCandidates(candidates: ReviewCandidate[], source: string): M
     }
   }
 
-  ensureClinoDirs();
+  ensureClynoDirs();
   return {
     decisions: writeMemoryFile('decisions.md', signals.decisions, source),
     todos: writeMemoryFile('todos.md', signals.todos, source),
@@ -1748,7 +1748,7 @@ function formatAcceptedReview(
     (opts.candidates?.length ?? 0) === 0
   ) {
     return [
-      'Clino review',
+      'Clyno review',
       '',
       `Session: ${report.sessionFilePath}`,
       '',
@@ -1760,7 +1760,7 @@ function formatAcceptedReview(
 
   if (selected.length === 0) {
     return [
-      'Clino review',
+      'Clyno review',
       '',
       `Session: ${report.sessionFilePath}`,
       '',
@@ -1771,7 +1771,7 @@ function formatAcceptedReview(
   }
 
   return [
-    'Clino review',
+    'Clyno review',
     '',
     `Session: ${report.sessionFilePath}`,
     '',
@@ -1830,10 +1830,10 @@ function printReviewPending(): number {
   lines.push(
     '',
     'Review with:',
-    '  clino review latest',
-    '  clino review <session-file>',
-    '  clino review <session-file> --accept all',
-    '  clino review <session-file> --skip',
+    '  clyno review latest',
+    '  clyno review <session-file>',
+    '  clyno review <session-file> --accept all',
+    '  clyno review <session-file> --skip',
   );
   console.log(lines.join('\n'));
   return 0;
@@ -1845,7 +1845,7 @@ function printReview(args: string[]): number {
 
   if (parsed.targetArg === 'pending') {
     if (parsed.accept || parsed.skip) {
-      console.error('clino review pending does not accept --accept or --skip.');
+      console.error('clyno review pending does not accept --accept or --skip.');
       return 1;
     }
     return printReviewPending();
@@ -1989,7 +1989,7 @@ function writeRebuiltMemory(plan: RebuildPlan): void {
 }
 
 function rebuildBackupPath(now = new Date()): string {
-  const backupsDir = join(CLINO_DIR, 'backups');
+  const backupsDir = join(CLYNO_DIR, 'backups');
   const stamp = now.toISOString().slice(0, 19).replace(/:/g, '-');
   let backupPath = join(backupsDir, `memory-${stamp}`);
   let suffix = 2;
@@ -2029,7 +2029,7 @@ function printMemoryRebuild(args: string[]): number {
       continue;
     }
     console.error(`Unknown memory rebuild option: ${arg}`);
-    console.error('Usage: clino memory rebuild [--dry-run]');
+    console.error('Usage: clyno memory rebuild [--dry-run]');
     return 1;
   }
 
@@ -2047,7 +2047,7 @@ function printMemoryRebuild(args: string[]): number {
 
   if (dryRun) {
     const lines = [
-      'Clino memory rebuild dry run',
+      'Clyno memory rebuild dry run',
       '',
       `Sessions: ${plan.sessionFiles.length}`,
       '',
@@ -2076,7 +2076,7 @@ function printMemoryRebuild(args: string[]): number {
   }
 
   const lines = [
-    'Clino memory rebuilt',
+    'Clyno memory rebuilt',
     '',
     `Sessions: ${plan.sessionFiles.length}`,
     `Backup: ${backupPath}`,
@@ -2101,7 +2101,7 @@ function printMemoryList(args: string[]): number {
     if (arg === '--type') {
       const value = args[i + 1];
       if (!value || value.startsWith('--')) {
-        console.error('Usage: clino memory list [--type <type>] [--include-resolved]');
+        console.error('Usage: clyno memory list [--type <type>] [--include-resolved]');
         return 1;
       }
       const parsedType = parseMemoryType(value);
@@ -2150,7 +2150,7 @@ function findMemoryItem(id: string): ListedMemoryItem | undefined {
 
 function printMemoryShow(args: string[]): number {
   if (args.length !== 1) {
-    console.error('Usage: clino memory show <id>');
+    console.error('Usage: clyno memory show <id>');
     return 1;
   }
 
@@ -2216,14 +2216,14 @@ function printMemoryDelete(args: string[]): number {
       return 1;
     }
     if (id) {
-      console.error('Usage: clino memory delete <id> [--dry-run]');
+      console.error('Usage: clyno memory delete <id> [--dry-run]');
       return 1;
     }
     id = arg;
   }
 
   if (!id) {
-    console.error('Usage: clino memory delete <id> [--dry-run]');
+    console.error('Usage: clyno memory delete <id> [--dry-run]');
     return 1;
   }
 
@@ -2262,7 +2262,7 @@ function runMemoryCommand(args: string[]): number {
     case 'rebuild':
       return printMemoryRebuild(args.slice(1));
     default:
-      console.error('Usage: clino memory <list|show|delete|rebuild>');
+      console.error('Usage: clyno memory <list|show|delete|rebuild>');
       return 1;
   }
 }
@@ -2295,63 +2295,63 @@ function countSummaries(filename: string): number {
   return summaryTextItems(parsed.body).length;
 }
 
-/** True if a root `.gitignore` has an uncommented entry for `.clino`. */
-function gitignoreHasClino(gitRoot: string): boolean {
+/** True if a root `.gitignore` has an uncommented entry for `.clyno`. */
+function gitignoreHasClyno(gitRoot: string): boolean {
   const giPath = join(gitRoot, '.gitignore');
   if (!existsSync(giPath)) return false;
   return readFileSync(giPath, 'utf8')
     .split('\n')
     .map((l) => l.trim())
     .filter((l) => l && !l.startsWith('#'))
-    .some((l) => l.replace(/^\//, '').replace(/\/$/, '') === '.clino');
+    .some((l) => l.replace(/^\//, '').replace(/\/$/, '') === '.clyno');
 }
 
 /**
- * Whether Git ignores the Clino directory. Prefers `git check-ignore` (which
+ * Whether Git ignores the Clyno directory. Prefers `git check-ignore` (which
  * also honors nested ignores and excludes); if the git binary is unavailable or
  * the repo can't be read, falls back to scanning the root `.gitignore`.
  */
-function detectClinoIgnored(gitRoot: string, clinoDir: string): boolean {
-  const rel = relative(gitRoot, clinoDir);
+function detectClynoIgnored(gitRoot: string, clynoDir: string): boolean {
+  const rel = relative(gitRoot, clynoDir);
   if (!rel || rel.startsWith('..')) return false; // outside the repo
   const res = spawnSync('git', ['-C', gitRoot, 'check-ignore', '--', rel], {
     encoding: 'utf8',
   });
   if (res.status === 0) return true;
   if (res.status === 1) return false;
-  return gitignoreHasClino(gitRoot); // git missing / repo unreadable
+  return gitignoreHasClyno(gitRoot); // git missing / repo unreadable
 }
 
-function clinoIgnoredLabel(storage: ClinoStorage): string {
-  if (storage.overrideActive) return 'n/a (custom CLINO_HOME)';
+function clynoIgnoredLabel(storage: ClynoStorage): string {
+  if (storage.overrideActive) return 'n/a (custom CLYNO_HOME)';
   if (!storage.gitRoot) return 'n/a (not a git repo)';
-  return detectClinoIgnored(storage.gitRoot, storage.home) ? 'yes' : 'no';
+  return detectClynoIgnored(storage.gitRoot, storage.home) ? 'yes' : 'no';
 }
 
 /**
- * Print where Clino stores memory for this project plus a quick health summary.
- * Read-only: it never creates `.clino/` or any memory file, so the resolved home
+ * Print where Clyno stores memory for this project plus a quick health summary.
+ * Read-only: it never creates `.clyno/` or any memory file, so the resolved home
  * is reported even when nothing has been captured yet (all counts show zero).
  */
 function printStatus(): void {
   const inGitRepo = STORAGE.gitRoot !== null;
 
   const storageMode = STORAGE.overrideActive
-    ? 'custom (CLINO_HOME)'
+    ? 'custom (CLYNO_HOME)'
     : inGitRepo
       ? 'project-local'
       : 'project-local (no git repo)';
 
-  // `.clino/` ignore status is only meaningful for a project-local home inside a
-  // repo; a custom CLINO_HOME or no repo makes it not applicable.
-  const ignored = clinoIgnoredLabel(STORAGE);
+  // `.clyno/` ignore status is only meaningful for a project-local home inside a
+  // repo; a custom CLYNO_HOME or no repo makes it not applicable.
+  const ignored = clynoIgnoredLabel(STORAGE);
 
   const lines = [
-    'Clino status',
+    'Clyno status',
     '',
-    `Home: ${CLINO_DIR}`,
+    `Home: ${CLYNO_DIR}`,
     `Storage mode: ${storageMode}`,
-    `CLINO_HOME override: ${STORAGE.overrideActive ? 'active' : 'not set'}`,
+    `CLYNO_HOME override: ${STORAGE.overrideActive ? 'active' : 'not set'}`,
     `Git repo: ${inGitRepo ? 'yes' : 'no'}`,
     `Git ignored: ${ignored}`,
     '',
@@ -2375,9 +2375,9 @@ function printStatus(): void {
     '- Secret redaction: enabled for extraction/review/inject output',
     '',
     'Try:',
-    '- clino find "auth"',
-    '- clino inject "storage"',
-    '- clino run claude',
+    '- clyno find "auth"',
+    '- clyno inject "storage"',
+    '- clyno run claude',
   ];
   console.log(lines.join('\n'));
 }
@@ -2389,7 +2389,7 @@ function printStatus(): void {
 function configuredCliBin(pkg: PackageInfo | null): string | null {
   if (!pkg?.bin) return null;
   if (typeof pkg.bin === 'string') return pkg.bin;
-  return pkg.bin.clino ?? null;
+  return pkg.bin.clyno ?? null;
 }
 
 function packageCliBinStatus(pkg: PackageInfo | null): { ok: boolean; label: string; warning?: string; serious?: boolean } {
@@ -2407,7 +2407,7 @@ function packageCliBinStatus(pkg: PackageInfo | null): { ok: boolean; label: str
     return {
       ok: false,
       label: 'missing',
-      warning: 'package.json has no bin entry for clino',
+      warning: 'package.json has no bin entry for clyno',
       serious: true,
     };
   }
@@ -2430,7 +2430,7 @@ function printDoctor(): number {
   const pty = nodePtyStatus();
   const cliBin = packageCliBinStatus(pkg);
   const buildOutput = buildOutputStatus(pkg);
-  const gitIgnored = clinoIgnoredLabel(STORAGE);
+  const gitIgnored = clynoIgnoredLabel(STORAGE);
   const warnings: string[] = [];
   let seriousIssue = false;
 
@@ -2444,19 +2444,19 @@ function printDoctor(): number {
   }
   if (buildOutput.warning) warnings.push(buildOutput.warning);
   if (!STORAGE.overrideActive && STORAGE.gitRoot && gitIgnored === 'no') {
-    warnings.push('.clino/ is not ignored by Git');
+    warnings.push('.clyno/ is not ignored by Git');
   }
 
   const lines = [
-    'Clino doctor',
+    'Clyno doctor',
     '',
-    `Version: clino ${pkg?.version ?? clinoVersion()}`,
+    `Version: clyno ${pkg?.version ?? clynoVersion()}`,
     `Node: ${process.version}`,
     `Platform: ${process.platform} ${process.arch}`,
     `CWD: ${process.cwd()}`,
     '',
     'Storage:',
-    `- Home: ${CLINO_DIR}`,
+    `- Home: ${CLYNO_DIR}`,
     `- Mode: ${STORAGE.mode}`,
     `- Git repo: ${STORAGE.gitRoot ? 'yes' : 'no'}`,
     `- Git ignored: ${gitIgnored}`,
@@ -2530,7 +2530,7 @@ switch (command) {
 
   case 'find': {
     if (!process.argv[3]) {
-      console.error('Usage: clino find <query>');
+      console.error('Usage: clyno find <query>');
       process.exit(1);
     }
     const findQuery = process.argv[3];
@@ -2568,11 +2568,11 @@ switch (command) {
   case 'resolve': {
     const query = process.argv[3];
     if (!query) {
-      console.error('Usage: clino resolve <id>');
-      console.error('       clino resolve <query>');
+      console.error('Usage: clyno resolve <id>');
+      console.error('       clyno resolve <query>');
       process.exit(1);
     }
-    ensureClinoDirs();
+    ensureClynoDirs();
 
     // Check if argument is a memory ID (e.g. todo-5, bug-1)
     const idMatch = query.match(/^(todo|bug|decision|error|resolved|summary)-(\d+)$/i);
@@ -2657,7 +2657,7 @@ switch (command) {
 
   case 'inject': {
     if (!process.argv[3]) {
-      console.error('Usage: clino inject <query> [--max-chars <number>]');
+      console.error('Usage: clyno inject <query> [--max-chars <number>]');
       process.exit(1);
     }
     const injectQuery = process.argv[3];
@@ -2676,6 +2676,6 @@ switch (command) {
 
   default:
     console.error(`Unknown command: ${command}`);
-    console.error('Run "clino help" for usage.');
+    console.error('Run "clyno help" for usage.');
     process.exit(1);
 }

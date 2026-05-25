@@ -1,11 +1,11 @@
 {
-  "name": "clino",
+  "name": "clyno",
   "version": "0.1.0",
   "description": "Persistent memory for AI coding agents",
   "main": "dist/index.js",
   "type": "module",
   "bin": {
-    "clino": "./dist/index.js"
+    "clyno": "./dist/index.js"
   },
   "files": [
     "dist/**/*.js"
@@ -30,16 +30,16 @@
     "codex",
     "claude-code"
   ],
-  "author": "Clino Contributors",
+  "author": "Clyno Contributors",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/TODO-OWNER/clino.git"
+    "url": "git+https://github.com/AlosMarkets/clyno.git"
   },
   "bugs": {
-    "url": "https://github.com/TODO-OWNER/clino/issues"
+    "url": "https://github.com/AlosMarkets/clyno/issues"
   },
-  "homepage": "https://github.com/TODO-OWNER/clino#readme",
+  "homepage": "https://github.com/AlosMarkets/clyno#readme",
   "devDependencies": {
     "@types/node": "^20.0.0",
     "ts-node": "^10.0.0",

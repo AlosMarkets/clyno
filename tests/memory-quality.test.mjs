@@ -13,7 +13,7 @@ import {
   cleanTranscriptForExtraction,
   compactForUiMatch,
   isDiffOrCodeNoise,
-  isClinoOutputNoise,
+  isClynoOutputNoise,
   isPromptRequestDirective,
   isCodexTaskChrome,
   isClaudeTaskChrome,
@@ -220,25 +220,25 @@ test('metadata: strips transcript header labels (bold and plain forms)', () => {
 
 test('repair: strips metadata prefix before repairing the content', () => {
   assert.equal(
-    repairMemoryText('**Arguments:** We decided to use project-local .clino storage'),
-    'Use project-local .clino storage.',
+    repairMemoryText('**Arguments:** We decided to use project-local .clyno storage'),
+    'Use project-local .clyno storage.',
   );
   assert.equal(
-    repairMemoryText('Arguments: We decided to use project-local .clino storage'),
-    'Use project-local .clino storage.',
+    repairMemoryText('Arguments: We decided to use project-local .clyno storage'),
+    'Use project-local .clyno storage.',
   );
   assert.equal(
-    repairMemoryText('We decided to use project-local .clino storage'),
-    'Use project-local .clino storage.',
+    repairMemoryText('We decided to use project-local .clyno storage'),
+    'Use project-local .clyno storage.',
   );
 });
 
 test('dogfood: plain sentence -> clean decision + todo', () => {
   const signals = extractSignals(
-    'We decided to use project-local .clino storage and need to add clino status command',
+    'We decided to use project-local .clyno storage and need to add clyno status command',
   );
-  assert.deepEqual(signals.decisions, ['Use project-local .clino storage.']);
-  assert.deepEqual(signals.todos, ['Add clino status command.']);
+  assert.deepEqual(signals.decisions, ['Use project-local .clyno storage.']);
+  assert.deepEqual(signals.todos, ['Add clyno status command.']);
   // No "**Arguments:**" or "We decided to use..." leaks into stored memory.
   for (const list of Object.values(signals)) {
     for (const m of list) {
@@ -250,10 +250,10 @@ test('dogfood: plain sentence -> clean decision + todo', () => {
 
 test('dogfood: transcript-style "**Arguments:**" line -> same clean memory', () => {
   const signals = extractSignals(
-    '**Arguments:** We decided to use project-local .clino storage and need to add clino status command',
+    '**Arguments:** We decided to use project-local .clyno storage and need to add clyno status command',
   );
-  assert.deepEqual(signals.decisions, ['Use project-local .clino storage.']);
-  assert.deepEqual(signals.todos, ['Add clino status command.']);
+  assert.deepEqual(signals.decisions, ['Use project-local .clyno storage.']);
+  assert.deepEqual(signals.todos, ['Add clyno status command.']);
 });
 
 test('dogfood: full transcript dedupes header line against the body line', () => {
@@ -262,26 +262,26 @@ test('dogfood: full transcript dedupes header line against the body line', () =>
     '# Coding Agent Session',
     '',
     '**Agent:** echo',
-    '**Arguments:** We decided to use project-local .clino storage and need to add clino status command',
+    '**Arguments:** We decided to use project-local .clyno storage and need to add clyno status command',
     '**Started:** 2026-05-25T00-00-00-000Z',
     '**Exit code:** 0',
     '',
     '## Transcript',
     '',
     '```',
-    'We decided to use project-local .clino storage and need to add clino status command',
+    'We decided to use project-local .clyno storage and need to add clyno status command',
     '```',
   ].join('\n');
   const signals = extractSignals(transcript);
   // The junk-vs-clean subsume bug used to keep the polluted version; now the
   // header and body collapse to one clean memory each.
-  assert.deepEqual(signals.decisions, ['Use project-local .clino storage.']);
-  assert.deepEqual(signals.todos, ['Add clino status command.']);
+  assert.deepEqual(signals.decisions, ['Use project-local .clyno storage.']);
+  assert.deepEqual(signals.todos, ['Add clyno status command.']);
 });
 
 test('dogfood: focus areas exclude metadata/junk words', () => {
   const signals = extractSignals(
-    'We decided to use project-local .clino storage and need to add clino status command',
+    'We decided to use project-local .clyno storage and need to add clyno status command',
   );
   const summary = synthesizeSummary(signals);
   assert.match(summary, /1 decision and 1 TODO/);
@@ -290,7 +290,7 @@ test('dogfood: focus areas exclude metadata/junk words', () => {
     assert.doesNotMatch(summary, new RegExp(junk, 'i'), `focus areas must not include "${junk}"`);
   }
   // Meaningful terms survive.
-  assert.match(summary, /Clino/);
+  assert.match(summary, /Clyno/);
   assert.match(summary, /storage/i);
 });
 
@@ -305,7 +305,7 @@ test('cleaning: strips ANSI/control noise and Codex UI chrome before extraction'
     'Access legacy models by running codex -m <model_name> or in your config.toml',
     'OpenAI Codex',
     'model: gpt-5.5 xhigh',
-    'directory: ~/Desktop/clino',
+    'directory: ~/Desktop/clyno',
     '╭───────────────────────────────────────╮',
     '╰───────────────────────────────────────╯',
   ].join('\n');
@@ -445,10 +445,10 @@ test('codex blob: auth markers never survive even when glued into kept prose', (
 test('codex blob: a real decision adjacent to a login blob still survives', () => {
   const transcript = [
     "WelcometoCodex,OpenAI'scommand-linecodingagentSigninwithChatGPT",
-    'We decided to use project-local .clino storage.',
+    'We decided to use project-local .clyno storage.',
   ].join('\n');
   const signals = extractSignals(transcript);
-  assert.deepEqual(signals.decisions, ['Use project-local .clino storage.']);
+  assert.deepEqual(signals.decisions, ['Use project-local .clyno storage.']);
 });
 
 test('quality: hard-rejects candidates whose compact form is Codex auth noise', () => {
@@ -467,7 +467,7 @@ test('codex blob: compacted slash-command MENU blob yields no cleaned text or me
     '/fast1.5x speed, increased usage/ideinclude current selection, open files' +
     '/permissionschoose what Codex is allowed to do/keymapremap TUI shortcuts' +
     '/vimtoggle Vim mode for the composer/compact summarize conversation to prevent ' +
-    'hitting the context limit gpt-5.5 xhigh · ~/Desktop/clino';
+    'hitting the context limit gpt-5.5 xhigh · ~/Desktop/clyno';
 
   const cleaned = cleanTranscriptForExtraction(menu);
   assert.doesNotMatch(cleaned, /choose what model/i);
@@ -515,7 +515,7 @@ test('compactForUiMatch: strips whitespace/punctuation, preserves letters/number
 
 test('diff noise: glued patch hunk yields no memories', () => {
   const blob =
-    '0, 0); 347 + assert.equal(stderr, ""); 348 + assert.match(stdout, /Clino inspect/); ' +
+    '0, 0); 347 + assert.equal(stderr, ""); 348 + assert.match(stdout, /Clyno inspect/); ' +
     '349 + assert.match(stdout, /- decisions: 1/);';
   const s = extractSignals(blob);
   for (const list of Object.values(s)) assert.deepEqual(list, []);
@@ -555,7 +555,7 @@ test('diff noise: a decision living only inside a diff string is not extracted',
 });
 
 test('diff noise: spinner glued to a diff/command line yields no memories', () => {
-  const blob = '165 clino find "auth bug"WWo•Wor•Work•Working•Working•Working•Working•Working';
+  const blob = '165 clyno find "auth bug"WWo•Wor•Work•Working•Working•Working•Working•Working';
   const s = extractSignals(blob);
   for (const list of Object.values(s)) assert.deepEqual(list, []);
 });
@@ -564,13 +564,13 @@ test('diff noise: real prose adjacent to diff/test noise still extracts', () => 
   const transcript = [
     'diff --git a/src/memory.ts b/src/memory.ts',
     '347 + assert.equal(stderr, "");',
-    'We decided to use project-local .clino storage.',
+    'We decided to use project-local .clyno storage.',
     '# pass 77',
-    'Need to add clino status command.',
+    'Need to add clyno status command.',
   ].join('\n');
   const s = extractSignals(transcript);
-  assert.deepEqual(s.decisions, ['Use project-local .clino storage.']);
-  assert.deepEqual(s.todos, ['Add clino status command.']);
+  assert.deepEqual(s.decisions, ['Use project-local .clyno storage.']);
+  assert.deepEqual(s.todos, ['Add clyno status command.']);
   for (const list of [s.bugs, s.errors, s.resolved]) assert.deepEqual(list, []);
 });
 
@@ -578,10 +578,10 @@ test('diff noise: must-keep natural-language memories still extract', () => {
   assert.deepEqual(extractSignals('Fixed GUARDRAILS.md unclosed code fence.').resolved, [
     'Fixed GUARDRAILS.md unclosed code fence.',
   ]);
-  assert.deepEqual(extractSignals('We decided to use project-local .clino storage.').decisions, [
-    'Use project-local .clino storage.',
+  assert.deepEqual(extractSignals('We decided to use project-local .clyno storage.').decisions, [
+    'Use project-local .clyno storage.',
   ]);
-  assert.deepEqual(extractSignals('Need to add clino status command.').todos, ['Add clino status command.']);
+  assert.deepEqual(extractSignals('Need to add clyno status command.').todos, ['Add clyno status command.']);
   assert.deepEqual(extractSignals('TODO: add memory delete dry-run test.').todos, [
     'Add memory delete dry-run test.',
   ]);
@@ -619,8 +619,8 @@ test('isDiffOrCodeNoise: flags diff/code/test-output, keeps natural-language pro
 
   for (const prose of [
     'Fixed GUARDRAILS.md unclosed code fence.',
-    'We decided to use project-local .clino storage.',
-    'Need to add clino status command.',
+    'We decided to use project-local .clyno storage.',
+    'Need to add clyno status command.',
     'Bug: inject shows resolved GUARDRAILS issue as open.',
     'TODO: add memory delete dry-run test.',
     'GUARDRAILS.md ends with an unclosed code fence (see GUARDRAILS.md:73).',
@@ -631,9 +631,9 @@ test('isDiffOrCodeNoise: flags diff/code/test-output, keeps natural-language pro
 });
 
 // --------------------------------------------------------------------------
-// 11. Prompt/spec echo, Clino-output echo, and session/status metadata
+// 11. Prompt/spec echo, Clyno-output echo, and session/status metadata
 //
-// Real transcripts paste large task specs into the agent and paste Clino's own
+// Real transcripts paste large task specs into the agent and paste Clyno's own
 // command output back into the conversation. Requirement bullets, command
 // examples, memory-list rows, dry-run output, and account/session/rate-limit
 // chrome are instructions or tool output — never project memories.
@@ -641,17 +641,17 @@ test('isDiffOrCodeNoise: flags diff/code/test-output, keeps natural-language pro
 
 test('prompt/spec echo: a pasted task spec yields zero memories', () => {
   const spec = [
-    'We are working on Clino.',
+    'We are working on Clyno.',
     'Current project state:',
     'Already implemented:',
-    '- clino run',
+    '- clyno run',
     'Goal: Implement Phase 1A from the updated roadmap.',
     'Tasks:',
-    '## 1. Add clino --version',
+    '## 1. Add clyno --version',
     'Requirements:',
     '- Add tests.',
     '- Use the existing test style.',
-    '- Update README.md to include clino doctor.',
+    '- Update README.md to include clyno doctor.',
     'Verification:',
     '- npm test',
     '- npm run build',
@@ -666,33 +666,33 @@ test('prompt/spec echo: a pasted task spec yields zero memories', () => {
 test('prompt/spec echo: pasted-content envelope is removed from cleaned text', () => {
   const transcript = [
     '› Improve documentation [Pasted Content 1234 chars]',
-    'We are working on Clino.',
+    'We are working on Clyno.',
     'Goal: Implement Phase 1A from the updated roadmap.',
     'Requirements:',
     '- Add tests.',
     '- Use the existing test style.',
     '• I will inspect the code now.',
-    'We decided to use project-local .clino storage.',
+    'We decided to use project-local .clyno storage.',
   ].join('\n');
 
   const cleaned = cleanTranscriptForExtraction(transcript);
   assert.doesNotMatch(cleaned, /Implement Phase 1A|Add tests|existing test style/i);
 
   const s = extractSignals(transcript);
-  assert.deepEqual(s.decisions, ['Use project-local .clino storage.']);
+  assert.deepEqual(s.decisions, ['Use project-local .clyno storage.']);
 });
 
-test('clino output echo: pasted summarize/list/delete output yields zero memories', () => {
+test('clyno output echo: pasted summarize/list/delete output yields zero memories', () => {
   const out = [
-    'Clino summarize dry run',
+    'Clyno summarize dry run',
     'Extraction counts:',
     '- decisions: 9',
     'Candidate memories:',
     'decisions (9)',
-    '- Decision-1 decision Use project-local .clino storage.',
+    '- Decision-1 decision Use project-local .clyno storage.',
     '- Summary-1 summary This session captured 1 decision and 1 TODO',
     'todos (10)',
-    '- Todo-1 todo Add clino status command.',
+    '- Todo-1 todo Add clyno status command.',
     'Final stored memories if written:',
     'bugs (15)',
     '- Bug-1 bug GUARDRAILS.md had an unclosed code fence.',
@@ -703,12 +703,12 @@ test('clino output echo: pasted summarize/list/delete output yields zero memorie
   for (const list of Object.values(s)) assert.deepEqual(list, []);
 });
 
-test('clino command examples yield zero memories', () => {
+test('clyno command examples yield zero memories', () => {
   const cmds = [
-    'clino memory show decision-1',
-    'clino memory delete decision-1 --dry-run',
-    'clino find "auth bug"',
-    'clino run echo "We decided to use manual proof memory."',
+    'clyno memory show decision-1',
+    'clyno memory delete decision-1 --dry-run',
+    'clyno find "auth bug"',
+    'clyno run echo "We decided to use manual proof memory."',
     'We decided to use manual proof memory and need to add manual proof delete test.',
     'Use manual proof memory.',
   ].join('\n');
@@ -751,10 +751,10 @@ test('session/status metadata is cleaned out and yields zero memories', () => {
   for (const list of Object.values(s)) assert.deepEqual(list, []);
 });
 
-test('isClinoOutputNoise: flags clino output rows/commands, keeps real prose', () => {
+test('isClynoOutputNoise: flags clyno output rows/commands, keeps real prose', () => {
   for (const noise of [
-    'decision-1 decision Use project-local .clino storage.',
-    'Decision-1 decision Use project-local .clino storage.',
+    'decision-1 decision Use project-local .clyno storage.',
+    'Decision-1 decision Use project-local .clyno storage.',
     'summary-1 summary This session captured 1 decision and 1 TODO',
     'Would delete decision-1 (decision): Use manual proof memory.',
     'Deleted decision-1 (decision): Use manual proof memory.',
@@ -762,36 +762,36 @@ test('isClinoOutputNoise: flags clino output rows/commands, keeps real prose', (
     '- decisions: 9',
     'No memory files were written.',
     'No memories found for: "auth bug"',
-    'clino memory delete decision-1 --dry-run',
-    'clino find "auth bug"',
+    'clyno memory delete decision-1 --dry-run',
+    'clyno find "auth bug"',
     'Memory extraction for decisions/todos/bugs/errors/summaries/resolved',
     'Memory show invalid ID.',
     'Memory delete invalid ID.',
-    'Does not write to `.clino/memory',
+    'Does not write to `.clyno/memory',
     'default and labels resolved bugs/TODOs.',
     'ID: decision-1',
     'Text: Use manual proof memory.',
   ]) {
-    assert.equal(isClinoOutputNoise(noise), true, `should be clino output: ${noise}`);
+    assert.equal(isClynoOutputNoise(noise), true, `should be clyno output: ${noise}`);
   }
 
   for (const prose of [
-    'We decided to use project-local .clino storage.',
-    'Need to add clino status command.',
+    'We decided to use project-local .clyno storage.',
+    'Need to add clyno status command.',
     'TODO: add memory delete dry-run test.',
     'Bug: inject shows resolved GUARDRAILS issue as open.',
-    'Decision: Clino should keep raw transcripts unchanged and clean only before extraction.',
+    'Decision: Clyno should keep raw transcripts unchanged and clean only before extraction.',
   ]) {
-    assert.equal(isClinoOutputNoise(prose), false, `should be prose: ${prose}`);
+    assert.equal(isClynoOutputNoise(prose), false, `should be prose: ${prose}`);
   }
 });
 
 test('echo rejection still preserves real memories outside spec/output blocks', () => {
-  assert.deepEqual(extractSignals('We decided to use project-local .clino storage.').decisions, [
-    'Use project-local .clino storage.',
+  assert.deepEqual(extractSignals('We decided to use project-local .clyno storage.').decisions, [
+    'Use project-local .clyno storage.',
   ]);
-  assert.deepEqual(extractSignals('Need to add clino status command.').todos, [
-    'Add clino status command.',
+  assert.deepEqual(extractSignals('Need to add clyno status command.').todos, [
+    'Add clyno status command.',
   ]);
   assert.deepEqual(extractSignals('Fixed GUARDRAILS.md unclosed code fence.').resolved, [
     'Fixed GUARDRAILS.md unclosed code fence.',
@@ -804,7 +804,7 @@ test('echo rejection still preserves real memories outside spec/output blocks', 
   ]);
   assert.equal(
     extractSignals(
-      'Decision: Clino should keep raw transcripts unchanged and clean only before extraction.',
+      'Decision: Clyno should keep raw transcripts unchanged and clean only before extraction.',
     ).decisions.length,
     1,
   );
@@ -812,11 +812,11 @@ test('echo rejection still preserves real memories outside spec/output blocks', 
 
 // The new echo/spec/status rejection must not be what blocks real prose: a
 // "Bug:"-labeled sentence written as normal conversation survives cleaning and is
-// not flagged as Clino output or session chrome. (Whether it ultimately stores as
+// not flagged as Clyno output or session chrome. (Whether it ultimately stores as
 // a bug is governed by the separate bug-concreteness gate, not this layer.)
 test('echo rejection leaves a "Bug:"-labeled real report untouched', () => {
   const bugLine = 'Bug: inject shows resolved GUARDRAILS issue as open.';
-  assert.equal(isClinoOutputNoise(bugLine), false);
+  assert.equal(isClynoOutputNoise(bugLine), false);
   assert.match(cleanTranscriptForExtraction(bugLine), /inject shows resolved GUARDRAILS issue as open/);
 });
 
@@ -827,10 +827,10 @@ test('prompt/spec directives survive block-shredding but still yield no memories
   for (const line of [
     'Use the existing test style.',
     'Use existing style.',
-    'Implement Phase 1A from the updated roadmap: CLI polish, --version, improved help, and clino doctor.',
+    'Implement Phase 1A from the updated roadmap: CLI polish, --version, improved help, and clyno doctor.',
     'Implement Phase 1B: user control over memory.',
-    'Add `clino --version`.',
-    'Add `clino doctor`.',
+    'Add `clyno --version`.',
+    'Add `clyno doctor`.',
     'Add/update tests for:',
     'Update README.md to include:',
     'Update the README with a short memory-management section.',
@@ -842,14 +842,14 @@ test('prompt/spec directives survive block-shredding but still yield no memories
   }
 
   // Must-keep imperatives that look superficially similar still extract.
-  assert.deepEqual(extractSignals('Use project-local .clino storage.').decisions, [
-    'Use project-local .clino storage.',
+  assert.deepEqual(extractSignals('Use project-local .clyno storage.').decisions, [
+    'Use project-local .clyno storage.',
   ]);
   assert.deepEqual(extractSignals('Add unit tests for auth module.').todos, [
     'Add unit tests for auth module.',
   ]);
-  assert.deepEqual(extractSignals('Need to add clino status command.').todos, [
-    'Add clino status command.',
+  assert.deepEqual(extractSignals('Need to add clyno status command.').todos, [
+    'Add clyno status command.',
   ]);
 });
 
@@ -861,7 +861,7 @@ test('final-report spec/output headings and wrapped bullets yield zero memories'
     'Memory',
     'Memory item',
     'Searching memory for: "manual proof memory"',
-    'The manual proof succeeded in /tmp/clino-manual-a0txYU: the decision item was listed.',
+    'The manual proof succeeded in /tmp/clyno-manual-a0txYU: the decision item was listed.',
     'Known Limitations',
     '- --include-resolved is accepted, but memory list already shows resolved items by',
     'default and labels resolved bugs/TODOs.',
@@ -872,11 +872,11 @@ test('final-report spec/output headings and wrapped bullets yield zero memories'
 });
 
 test('bare file-path lines are diff/code noise, prose mentioning a file is not', () => {
-  for (const line of ['.clino/memory/bugs.md', 'src/memory.ts', 'tests/storage.test.mjs']) {
+  for (const line of ['.clyno/memory/bugs.md', 'src/memory.ts', 'tests/storage.test.mjs']) {
     assert.equal(isDiffOrCodeNoise(line), true, `should be noise: ${line}`);
   }
   assert.equal(isDiffOrCodeNoise('Fixed GUARDRAILS.md unclosed code fence.'), false);
-  assert.equal(isDiffOrCodeNoise('Need to add clino status command.'), false);
+  assert.equal(isDiffOrCodeNoise('Need to add clyno status command.'), false);
 });
 
 test('real memory adjacent to a spec block still extracts', () => {
@@ -884,15 +884,15 @@ test('real memory adjacent to a spec block still extracts', () => {
     'Requirements:',
     '- Add tests.',
     '- Use the existing test style.',
-    'We decided to use project-local .clino storage.',
-    '## 2. clino doctor',
+    'We decided to use project-local .clyno storage.',
+    '## 2. clyno doctor',
     '- Diagnose setup issues.',
-    'Need to add clino status command.',
+    'Need to add clyno status command.',
   ].join('\n');
 
   const s = extractSignals(transcript);
-  assert.deepEqual(s.decisions, ['Use project-local .clino storage.']);
-  assert.deepEqual(s.todos, ['Add clino status command.']);
+  assert.deepEqual(s.decisions, ['Use project-local .clyno storage.']);
+  assert.deepEqual(s.todos, ['Add clyno status command.']);
   for (const list of [s.bugs, s.errors, s.resolved]) assert.deepEqual(list, []);
 });
 
@@ -901,7 +901,7 @@ test('real memory adjacent to a spec block still extracts', () => {
 // --------------------------------------------------------------------------
 test('extract: rejects pasted review prompt instructions', () => {
   const prompt =
-    'Review the current Clino MVP from README.md, ROADMAP.md, and GUARDRAILS.md. Do not edit files. Identify the top 3 remaining MVP risks and the smallest next fixes.';
+    'Review the current Clyno MVP from README.md, ROADMAP.md, and GUARDRAILS.md. Do not edit files. Identify the top 3 remaining MVP risks and the smallest next fixes.';
   const s = extractSignals(prompt);
   assert.deepEqual(s.todos, []);
   assert.deepEqual(s.bugs, []);
@@ -919,8 +919,8 @@ test('extract: review conclusion is not classified as a bug', () => {
 
 test('extract: concrete Bug: prefix and doc defects still extract as bugs', () => {
   assert.deepEqual(
-    extractSignals('Bug: clino run --review writes memory before review.').bugs,
-    ['Clino run --review writes memory before review.'],
+    extractSignals('Bug: clyno run --review writes memory before review.').bugs,
+    ['Clyno run --review writes memory before review.'],
   );
   assert.deepEqual(
     extractSignals('GUARDRAILS.md has an unclosed code fence.').bugs,
@@ -930,7 +930,7 @@ test('extract: concrete Bug: prefix and doc defects still extract as bugs', () =
 
 test('extract: Codex task chrome is rejected and stripped', () => {
   const contaminated =
-    'Based on the docs, the MVP is close on positioning but still has three material gaps: › Find and fix a bug in @filename gpt-5.4-mini medium · ~/Desktop/clino';
+    'Based on the docs, the MVP is close on positioning but still has three material gaps: › Find and fix a bug in @filename gpt-5.4-mini medium · ~/Desktop/clyno';
   const s = extractSignals(contaminated);
   assert.deepEqual(s.bugs, []);
   for (const list of Object.values(s)) {
@@ -944,7 +944,7 @@ test('extract: Codex task chrome is rejected and stripped', () => {
 test('prompt-request filter keeps real project TODOs', () => {
   for (const line of [
     'Add a manual memory review workflow.',
-    'Add clino status command.',
+    'Add clyno status command.',
     'Add memory delete dry-run test.',
     'Fix inject showing resolved bugs as open.',
   ]) {
@@ -953,7 +953,7 @@ test('prompt-request filter keeps real project TODOs', () => {
   const s = extractSignals(
     [
       'Add a manual memory review workflow.',
-      'Need to add clino status command.',
+      'Need to add clyno status command.',
       'TODO: add memory delete dry-run test.',
       'Bug: inject shows resolved GUARDRAILS issue as open.',
     ].join('\n'),
@@ -967,7 +967,7 @@ test('suspicious candidate heuristic flags prompt-like survivors', () => {
     isSuspiciousCandidate('Identify the top 3 remaining MVP risks and the smallest next fixes.', 'todos'),
     true,
   );
-  assert.equal(isSuspiciousCandidate('Add clino status command.', 'todos'), false);
+  assert.equal(isSuspiciousCandidate('Add clyno status command.', 'todos'), false);
   assert.equal(isSuspiciousCandidate('This session captured 1 decision.', 'summaries'), true);
   assert.equal(
     isSuspiciousCandidate('This session captured 1 decision. Focus areas: JWT, Auth.', 'summaries'),
@@ -1025,8 +1025,8 @@ test('extract: compacted Claude Code UI blob yields zero memories', () => {
 
 test('extract: real project bug/todo/error survive Claude UI filtering', () => {
   assert.deepEqual(
-    extractSignals('Bug: clino review accepts Claude login UI as memory.').bugs,
-    ['Clino review accepts Claude login UI as memory.'],
+    extractSignals('Bug: clyno review accepts Claude login UI as memory.').bugs,
+    ['Clyno review accepts Claude login UI as memory.'],
   );
   const npm = extractSignals('npm test failed with exit code 1.');
   assert.equal(npm.errors.length + npm.bugs.length, 1);
@@ -1043,7 +1043,7 @@ test('claude auth noise is never stored as errors', () => {
   );
   assert.equal(isClaudeAuthNoise('npm test failed with exit code 1.'), false);
   assert.equal(isClaudeTaskChrome('Use when building multi-platform chat bots'), true);
-  assert.equal(isClaudeTaskChrome('Bug: clino review accepts Claude login UI as memory.'), false);
+  assert.equal(isClaudeTaskChrome('Bug: clyno review accepts Claude login UI as memory.'), false);
   assert.equal(isClaudeTaskChrome('TODO: add Claude Code UI filtering.'), false);
 });
 
@@ -1071,7 +1071,7 @@ test('cursor chrome: cleaned transcript is empty for Cursor Agent UI noise', () 
     '→ Plan, search, build anything',
     '▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀',
     'Auto Auto-run',
-    '~/Desktop/clino · master',
+    '~/Desktop/clyno · master',
     '⠘⠆ Working',
     '→ Add a follow-up ctrl+c to stop',
   ].join('\n');
@@ -1095,39 +1095,39 @@ test('cursor chrome: real project memory survives adjacent cursor UI noise', () 
     'Cursor Agent',
     'v2026.05.24-dda726e',
     'Use /mcp to connect Cursor to your tools and data sources.',
-    'We decided to use project-local .clino storage.',
+    'We decided to use project-local .clyno storage.',
     '▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄',
-    'Need to add clino status command.',
+    'Need to add clyno status command.',
   ].join('\n');
 
   const signals = extractSignals(transcript);
-  assert.deepEqual(signals.decisions, ['Use project-local .clino storage.']);
-  assert.deepEqual(signals.todos, ['Add clino status command.']);
+  assert.deepEqual(signals.decisions, ['Use project-local .clyno storage.']);
+  assert.deepEqual(signals.todos, ['Add clyno status command.']);
   for (const list of [signals.bugs, signals.errors, signals.resolved]) assert.deepEqual(list, []);
 });
 
 test('cursor chrome: isCursorTaskChrome detects MCP/connect phrases', () => {
   assert.equal(isCursorTaskChrome('Use /mcp to connect Cursor to your tools and data sources.'), true);
   assert.equal(isCursorTaskChrome('/mcp setup'), true);
-  assert.equal(isCursorTaskChrome('Use project-local .clino storage.'), false);
-  assert.equal(isCursorTaskChrome('Need to add clino status command.'), false);
+  assert.equal(isCursorTaskChrome('Use project-local .clyno storage.'), false);
+  assert.equal(isCursorTaskChrome('Need to add clyno status command.'), false);
 });
 
 test('cursor chrome: prompt template placeholders are dropped', () => {
   const transcript = [
-    'CLINO_MEMORY:',
+    'CLYNO_MEMORY:',
     'Decision: ...',
     'TODO: ...',
     'Bug: ...',
     'Resolved: ...',
     'Only include concrete long-term project memory. Do not include general commentary.',
     '',
-    'Decision: Use project-local .clino storage.',
+    'Decision: Use project-local .clyno storage.',
     'TODO: Add manual memory review workflow.',
   ].join('\n');
 
   const cleaned = cleanTranscriptForExtraction(transcript);
-  assert.doesNotMatch(cleaned, /CLINO_MEMORY/);
+  assert.doesNotMatch(cleaned, /CLYNO_MEMORY/);
   assert.doesNotMatch(cleaned, /Decision: \.\.\./);
   assert.doesNotMatch(cleaned, /TODO: \.\.\./);
   assert.doesNotMatch(cleaned, /Bug: \.\.\./);
@@ -1135,11 +1135,11 @@ test('cursor chrome: prompt template placeholders are dropped', () => {
   assert.doesNotMatch(cleaned, /Only include concrete/);
 
   // Real memories must survive.
-  assert.match(cleaned, /Use project-local \.clino storage/);
+  assert.match(cleaned, /Use project-local \.clyno storage/);
   assert.match(cleaned, /Add manual memory review workflow/);
 
   const signals = extractSignals(transcript);
-  assert.deepEqual(signals.decisions, ['Use project-local .clino storage.']);
+  assert.deepEqual(signals.decisions, ['Use project-local .clyno storage.']);
   assert.deepEqual(signals.todos, ['Add manual memory review workflow.']);
 });
 
@@ -1155,19 +1155,19 @@ test('cursor chrome: slash-command help is rejected as candidate', () => {
   // Normal "use" sentences must NOT be rejected.
   assert.equal(isQualityMemory('Use PTY/terminal I/O only for agent integration.', 'decisions'), true);
   assert.equal(isQualityMemory('Use markdown memory files for MVP storage.', 'decisions'), true);
-  assert.equal(isQualityMemory('Use project-local .clino storage.', 'decisions'), true);
+  assert.equal(isQualityMemory('Use project-local .clyno storage.', 'decisions'), true);
 });
 
 test('cursor chrome: spinner contamination is repaired', () => {
   const repaired = repairMemoryText(
-    'Default clino inject limits are 8 items and 6000 characters; ranking prefers exact matches, ⠘⠆ Working 11k tokens.',
+    'Default clyno inject limits are 8 items and 6000 characters; ranking prefers exact matches, ⠘⠆ Working 11k tokens.',
   );
   // Should be cleaned up — the spinner/token suffix removed.
   assert.doesNotMatch(repaired, /Working/);
   assert.doesNotMatch(repaired, /⠘⠆/);
   assert.doesNotMatch(repaired, /tokens/);
   // Core content preserved.
-  assert.match(repaired, /Default clino inject limits/);
+  assert.match(repaired, /Default clyno inject limits/);
   assert.match(repaired, /ranking prefers exact matches/);
 });
 
@@ -1193,8 +1193,8 @@ test('runtime status chrome: isRuntimeStatusChrome detects auto-run patterns', (
   assert.equal(isRuntimeStatusChrome('⠠⠜ Working 32 tokens'), true);
   assert.equal(isRuntimeStatusChrome('⠰⠰ Reading'), true);
   // Must NOT detect real prose.
-  assert.equal(isRuntimeStatusChrome('Use project-local .clino storage.'), false);
-  assert.equal(isRuntimeStatusChrome('Need to add clino status command.'), false);
+  assert.equal(isRuntimeStatusChrome('Use project-local .clyno storage.'), false);
+  assert.equal(isRuntimeStatusChrome('Need to add clyno status command.'), false);
   assert.equal(isRuntimeStatusChrome('Fixed GUARDRAILS.md unclosed code fence.'), false);
   assert.equal(isRuntimeStatusChrome('We decided to use JWT auth.'), false);
 });
@@ -1220,27 +1220,27 @@ test('runtime status chrome: standalone auto-run lines are cleaned', () => {
 test('runtime status chrome: real memory adjacent to runtime status still extracts', () => {
   const transcript = [
     'Auto · 7.3% Auto-run',
-    'We decided to use project-local .clino storage.',
+    'We decided to use project-local .clyno storage.',
     '⠠⠜ Working',
-    'Need to add clino status command.',
+    'Need to add clyno status command.',
     '⠰⠰ Reading',
   ].join('\n');
 
   const signals = extractSignals(transcript);
-  assert.deepEqual(signals.decisions, ['Use project-local .clino storage.']);
-  assert.deepEqual(signals.todos, ['Add clino status command.']);
+  assert.deepEqual(signals.decisions, ['Use project-local .clyno storage.']);
+  assert.deepEqual(signals.todos, ['Add clyno status command.']);
   for (const list of [signals.bugs, signals.errors, signals.resolved]) assert.deepEqual(list, []);
 });
 
 test('runtime status chrome: trailing auto-run contamination is repaired', () => {
   const repaired = repairMemoryText(
-    'Default clino inject limits are 8 items and 6000 characters; ranking prefers exact matches, Auto · 7.3% Auto-run.',
+    'Default clyno inject limits are 8 items and 6000 characters; ranking prefers exact matches, Auto · 7.3% Auto-run.',
   );
   // The auto-run suffix must be stripped.
   assert.doesNotMatch(repaired, /Auto-run/);
   assert.doesNotMatch(repaired, /auto\s*·\s*7\.3%/i);
   // Core content preserved.
-  assert.match(repaired, /Default clino inject limits/);
+  assert.match(repaired, /Default clyno inject limits/);
   assert.match(repaired, /ranking prefers exact matches/);
 });
 
@@ -1279,7 +1279,7 @@ test('memoryResolvesItem: does NOT match other memory-item todos', () => {
   const resolved = 'Resolved: Add a manual memory review workflow.';
   assert.equal(memoryResolvesItem('Add memory delete dry-run test.', resolved), false);
   assert.equal(memoryResolvesItem('Add Git memory export workflow.', resolved), false);
-  assert.equal(memoryResolvesItem('Add clino status command.', resolved), false);
+  assert.equal(memoryResolvesItem('Add clyno status command.', resolved), false);
 });
 
 test('memoryResolvesItem: does NOT match unrelated resolved items', () => {
@@ -1309,7 +1309,7 @@ test('memoryResolvesItem: secret detection stays open when only manual review is
   const openItems = [
     'Add a manual memory review workflow.',
     'Add secret detection before any future Git memory export/commit workflow.',
-    'Add clino status command.',
+    'Add clyno status command.',
     'Add memory delete dry-run test.',
   ];
   const resolved = 'Resolved: Add a manual memory review workflow.';
@@ -1322,7 +1322,7 @@ test('memoryResolvesItem: inject secret detection should show open todos', () =>
   const openItems = [
     'Add a manual memory review workflow.',
     'Add secret detection before any future Git memory export/commit workflow.',
-    'Add clino status command.',
+    'Add clyno status command.',
     'Add memory delete dry-run test.',
   ];
   const resolved = 'Resolved: Add a manual memory review workflow.';

@@ -1,6 +1,6 @@
 # Release Checklist
 
-Run through this before tagging a release. Clino is **not published to npm yet**;
+Run through this before tagging a release. Clyno is **not published to npm yet**;
 the publish step is intentionally left for later.
 
 ## 1. Verify the build and tests
@@ -15,17 +15,17 @@ Both must pass with no errors.
 ## 2. Manual smoke test
 
 ```bash
-clino run echo   # PTY wrapper launches, captures, and exits cleanly
-clino status     # prints the resolved .clino/ home and memory counts
-clino find       # search runs and returns results (or an empty result)
+clyno run echo   # PTY wrapper launches, captures, and exits cleanly
+clyno status     # prints the resolved .clyno/ home and memory counts
+clyno find       # search runs and returns results (or an empty result)
 ```
 
 ## 3. Verify privacy defaults
 
-- Confirm `.clino/` is ignored by Git:
+- Confirm `.clyno/` is ignored by Git:
 
   ```bash
-  git check-ignore .clino && echo "ignored OK"
+  git check-ignore .clyno && echo "ignored OK"
   ```
 
 - Confirm no transcripts or memory files are staged for commit.

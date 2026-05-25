@@ -1,16 +1,16 @@
-# Clino Guardrails
+# Clyno Guardrails
 
-Clino is a local-first memory layer for terminal-based AI coding agents.
+Clyno is a local-first memory layer for terminal-based AI coding agents.
 
 Its purpose is to help users preserve, search, and rehydrate their own project context without repeatedly re-explaining the same work to AI coding tools.
 
-Clino must remain a user-controlled terminal memory tool, not an automation layer, proxy, credential handler, subscription bypass, or hosted model-access product.
+Clyno must remain a user-controlled terminal memory tool, not an automation layer, proxy, credential handler, subscription bypass, or hosted model-access product.
 
 ---
 
 ## Core Positioning
 
-Clino should be described as:
+Clyno should be described as:
 
 > Local memory for your terminal coding agents.
 
@@ -23,7 +23,7 @@ Approved positioning:
 - Persistent memory for user-operated CLI tools
 - Markdown-native memory for AI-assisted development
 
-Avoid positioning Clino as:
+Avoid positioning Clyno as:
 
 - Infinite context
 - A Claude Code wrapper that extends usage
@@ -36,7 +36,7 @@ Avoid positioning Clino as:
 
 ## Product Boundary
 
-Clino may:
+Clyno may:
 
 - Launch user-installed terminal tools locally.
 - Record terminal output that is visible to the user.
@@ -49,12 +49,12 @@ Clino may:
 - Let users inspect, edit, delete, export, or disable memory.
 - Support multiple terminal agents through local adapters.
 
-Clino must not:
+Clyno must not:
 
 - Provide access to Claude, OpenAI, or any model provider.
 - Sell access to third-party AI subscriptions.
-- Route user prompts through Clino-owned accounts.
-- Proxy Claude Code, Codex, Aider, Goose, or other agents through Clino servers.
+- Route user prompts through Clyno-owned accounts.
+- Proxy Claude Code, Codex, Aider, Goose, or other agents through Clyno servers.
 - Extract, store, reuse, or forward provider credentials.
 - Read hidden authentication files from model providers.
 - Share one user’s subscription with other users.
@@ -66,20 +66,20 @@ Clino must not:
 
 ## Claude Code / Codex / Agent Compatibility
 
-Clino should treat every coding agent as an external user-installed tool.
+Clyno should treat every coding agent as an external user-installed tool.
 
 The safest integration model is:
 
 ```txt
 User installs agent normally
 User authenticates with provider normally
-User runs agent locally through Clino
-Clino observes local terminal I/O
-Clino saves local memory
+User runs agent locally through Clyno
+Clyno observes local terminal I/O
+Clyno saves local memory
 User remains responsible for provider terms
 ```
 
-Clino should not depend on unofficial credential access, private APIs, reverse engineering, or hidden provider internals.
+Clyno should not depend on unofficial credential access, private APIs, reverse engineering, or hidden provider internals.
 
 Preferred integration methods:
 
@@ -104,7 +104,7 @@ Avoid:
 
 ## Privacy Principles
 
-Clino is local-first by default.
+Clyno is local-first by default.
 
 Default behavior:
 
@@ -128,16 +128,16 @@ Sensitive data handling:
 
 - Users must be able to delete any session, memory, or index.
 - Memory files should be stored in a clear, user-controlled folder.
-- Clino should keep `.clino/` ignored by Git by default.
-- Clino should warn before any future export/share/commit workflow.
-- Clino should avoid storing API keys, tokens, passwords, or private credentials.
+- Clyno should keep `.clyno/` ignored by Git by default.
+- Clyno should warn before any future export/share/commit workflow.
+- Clyno should avoid storing API keys, tokens, passwords, or private credentials.
 - Secret detection should be added before any Git integration.
 
 ---
 
 ## Memory Capture Rules
 
-Clino should capture only what is necessary to create useful project memory.
+Clyno should capture only what is necessary to create useful project memory.
 
 Prefer storing:
 
@@ -175,7 +175,7 @@ Raw transcripts may be stored locally, but memory extraction should aggressively
 
 Context injection must be selective, compact, and user-visible.
 
-Clino should:
+Clyno should:
 
 - Inject only relevant memories.
 - Respect a default character/token budget.
@@ -186,7 +186,7 @@ Clino should:
 - Include source references when useful.
 - Avoid dumping the entire memory folder into an agent.
 
-Clino should not:
+Clyno should not:
 
 - Automatically inject huge histories.
 - Hide injected context from the user.
@@ -209,7 +209,7 @@ Deduplicate before output
 
 ## Automation Guardrails
 
-Clino should remain a memory assistant, not an autonomous usage amplifier.
+Clyno should remain a memory assistant, not an autonomous usage amplifier.
 
 Allowed automation:
 
@@ -229,27 +229,27 @@ Restricted automation:
 - Any feature designed to bypass rate limits or usage limits
 - Any feature that turns a subscription CLI into a hosted API
 
-If Clino later supports workflows or agents, they must require clear user intent and must respect provider terms.
+If Clyno later supports workflows or agents, they must require clear user intent and must respect provider terms.
 
 ---
 
 ## Legal / Terms-of-Service Posture
 
-Clino is not a legal advisor and should not claim that all third-party usage is allowed.
+Clyno is not a legal advisor and should not claim that all third-party usage is allowed.
 
 Documentation should include language like:
 
 ```txt
-Clino does not provide access to any AI model or coding agent. Users are responsible for complying with the terms of the tools they run through Clino.
+Clyno does not provide access to any AI model or coding agent. Users are responsible for complying with the terms of the tools they run through Clyno.
 ```
 
 Recommended public disclaimer:
 
 ```txt
-Clino is a local terminal memory tool. It records and organizes terminal output visible to the user. It does not bypass rate limits, automate account sharing, extract credentials, proxy requests, or provide model access.
+Clyno is a local terminal memory tool. It records and organizes terminal output visible to the user. It does not bypass rate limits, automate account sharing, extract credentials, proxy requests, or provide model access.
 ```
 
-Do not market Clino as a way to:
+Do not market Clyno as a way to:
 
 - Increase Claude Code limits
 - Avoid API pricing
@@ -265,7 +265,7 @@ Before adding a new agent integration, answer:
 
 1. Does this integration use only documented behavior?
 2. Does the user authenticate with the provider directly?
-3. Does Clino avoid touching credentials?
+3. Does Clyno avoid touching credentials?
 4. Is all captured context visible to the user?
 5. Can the user disable capture?
 6. Can the user delete memory?
@@ -278,7 +278,7 @@ If any answer is “no,” do not ship the integration until redesigned.
 
 ## Memory Quality Guardrails
 
-Clino memory should be useful, compact, and accurate.
+Clyno memory should be useful, compact, and accurate.
 
 Extraction should:
 
@@ -317,9 +317,9 @@ Open Bug/TODO: Fix Redis blacklist bug.
 
 Memory files may contain sensitive project information.
 
-For MVP, Clino should keep all `.clino/` state ignored by Git by default.
+For MVP, Clyno should keep all `.clyno/` state ignored by Git by default.
 
-Before enabling any future Git integration, Clino must:
+Before enabling any future Git integration, Clyno must:
 
 - Warn users that memory may contain private information.
 - Provide `.gitignore` recommendations.
@@ -331,7 +331,7 @@ Before enabling any future Git integration, Clino must:
 Default `.gitignore`:
 
 ```gitignore
-.clino/
+.clyno/
 ```
 
 Only export or commit memory files if the user explicitly wants project memory in version control.
@@ -340,7 +340,7 @@ Only export or commit memory files if the user explicitly wants project memory i
 
 ## Security Guardrails
 
-Clino should never intentionally collect or store:
+Clyno should never intentionally collect or store:
 
 - API keys
 - OAuth tokens
@@ -351,7 +351,7 @@ Clino should never intentionally collect or store:
 - Billing information
 - Private account tokens
 
-If detected in terminal output or memory, Clino should:
+If detected in terminal output or memory, Clyno should:
 
 - Redact the secret where possible.
 - Warn the user.
@@ -410,12 +410,12 @@ Only add advanced features after the local CLI is reliable.
 
 ## Product Test
 
-Clino is on-track if this works:
+Clyno is on-track if this works:
 
 ```txt
-A user runs a coding agent through Clino for one real session.
-Clino captures the session without breaking the terminal.
-Clino extracts useful memory.
+A user runs a coding agent through Clyno for one real session.
+Clyno captures the session without breaking the terminal.
+Clyno extracts useful memory.
 The user closes the session.
 The user returns later.
 The user searches memory and finds the right decision.
@@ -429,10 +429,10 @@ If that loop is not excellent, do not add more features.
 
 ## North Star
 
-Clino should help users avoid repeating themselves.
+Clyno should help users avoid repeating themselves.
 
 The product promise is:
 
 > Never explain your project to an AI coding agent twice.
 
-Everything Clino builds should support that promise without compromising user privacy, provider terms, or user control.
+Everything Clyno builds should support that promise without compromising user privacy, provider terms, or user control.

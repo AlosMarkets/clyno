@@ -4,11 +4,11 @@ dist/
 .env.*
 .DS_Store
 
-# Clino local state — private by default.
+# Clyno local state — private by default.
 # Transcripts, memory, indexes, and cache may contain sensitive project
 # context, so the whole directory is ignored. Curated memory can be exported
 # or force-added manually later if a project chooses to share it.
-.clino/
+.clyno/
 
 # Logs
 *.log

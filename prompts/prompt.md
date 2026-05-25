@@ -1,4 +1,4 @@
-Dogfood revealed the next extraction bug: real Codex/Claude terminal transcripts contain ANSI/control-code noise and agent UI narration. Clino is extracting polluted memories.
+Dogfood revealed the next extraction bug: real Codex/Claude terminal transcripts contain ANSI/control-code noise and agent UI narration. Clyno is extracting polluted memories.
 
 Observed bad memory:
 

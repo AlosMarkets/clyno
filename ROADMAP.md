@@ -1,12 +1,12 @@
-## Where Clino actually is now
+## Where Clyno actually is now
 
 Current reality:
 
 ```txt
 Built:
 - TypeScript CLI
-- real node-pty `clino run`
-- project-local `.clino/`
+- real node-pty `clyno run`
+- project-local `.clyno/`
 - private-by-default Git behavior
 - transcript capture
 - transcript cleaning
@@ -54,29 +54,29 @@ That means the next roadmap should focus on:
 
 ### Phase 1 — MVP hardening
 
-Goal: make Clino reliable enough for your own daily use.
+Goal: make Clyno reliable enough for your own daily use.
 
 Build next:
 
 ```txt
-clino --version
-clino help
-clino doctor
-clino clean
-clino memory list
-clino memory show
-clino memory delete
+clyno --version
+clyno help
+clyno doctor
+clyno clean
+clyno memory list
+clyno memory show
+clyno memory delete
 ```
 
-Why? Because right now Clino can create memories, but user control is still thin. A memory tool must let the user inspect and delete what it learned.
+Why? Because right now Clyno can create memories, but user control is still thin. A memory tool must let the user inspect and delete what it learned.
 
 I would prioritize:
 
 ```txt
-1. clino memory list
-2. clino memory show <type>
-3. clino memory delete <id or query>
-4. clino doctor
+1. clyno memory list
+2. clyno memory show <type>
+3. clyno memory delete <id or query>
+4. clyno doctor
 ```
 
 Not embeddings. Not GUI.
@@ -85,23 +85,23 @@ Not embeddings. Not GUI.
 
 This is the real missing piece.
 
-Right now Clino can extract and resolve, but the user needs a way to correct it.
+Right now Clyno can extract and resolve, but the user needs a way to correct it.
 
 Needed commands:
 
 ```bash
-clino memory list
-clino memory edit
-clino memory delete
-clino resolve "GUARDRAILS code fence"
-clino ignore "bad extracted memory"
+clyno memory list
+clyno memory edit
+clyno memory delete
+clyno resolve "GUARDRAILS code fence"
+clyno ignore "bad extracted memory"
 ```
 
 This matters more than semantic search because bad memory is worse than no memory.
 
 The product principle should be:
 
-> Clino never traps users with stale or wrong memory.
+> Clyno never traps users with stale or wrong memory.
 
 ### Phase 3 — Better real-session extraction
 
@@ -119,10 +119,10 @@ Add:
 Useful commands:
 
 ```bash
-clino inspect latest
-clino inspect <session>
-clino summarize --dry-run <session>
-clino summarize --show-cleaned <session>
+clyno inspect latest
+clyno inspect <session>
+clyno summarize --dry-run <session>
+clyno summarize --show-cleaned <session>
 ```
 
 This lets you debug extraction without guessing.
@@ -177,30 +177,30 @@ The old roadmap puts this too early. Your dogfood showed the bottleneck is not s
 I’d replace the stale roadmap with something like this:
 
 ````md
-# Clino Roadmap
+# Clyno Roadmap
 
 ## Current Status
 
-Clino is no longer pre-prototype.
+Clyno is no longer pre-prototype.
 
 The current CLI can:
 
 - Run terminal agents through a real PTY.
 - Capture raw transcripts.
-- Store project-local `.clino/` memory.
-- Keep `.clino/` private by default in Git.
+- Store project-local `.clyno/` memory.
+- Keep `.clyno/` private by default in Git.
 - Clean terminal/TUI noise before extraction.
 - Extract decisions, TODOs, bugs, errors, summaries, and resolved items.
 - Repair low-quality memory fragments.
 - Deduplicate repeated memories.
-- Search memory with `clino find`.
-- Generate context with `clino inject`.
-- Show storage health with `clino status`.
+- Search memory with `clyno find`.
+- Generate context with `clyno inject`.
+- Show storage health with `clyno status`.
 - Suppress resolved bugs during injection.
 
 The next goal is not to add a GUI or embeddings.
 
-The next goal is to make Clino reliable enough for daily use.
+The next goal is to make Clyno reliable enough for daily use.
 
 ---
 
@@ -208,20 +208,20 @@ The next goal is to make Clino reliable enough for daily use.
 
 Never explain your project to an AI coding agent twice.
 
-Clino should preserve useful project context from terminal AI sessions and make it easy to reuse later without bloating the agent context window.
+Clyno should preserve useful project context from terminal AI sessions and make it easy to reuse later without bloating the agent context window.
 
 ---
 
 ## Current MVP Loop
 
 ```txt
-clino run <agent>
+clyno run <agent>
 → capture transcript
 → clean transcript for extraction
 → extract useful memory
 → store local project memory
-→ search with clino find
-→ inject with clino inject
+→ search with clyno find
+→ inject with clyno inject
 → resolve stale memories
 ````
 
@@ -234,21 +234,21 @@ Goal: make the CLI predictable, inspectable, and safe.
 ### Priorities
 
 * Improve CLI help output.
-* Add `clino --version`.
-* Add `clino doctor`.
-* Add `clino memory list`.
-* Add `clino memory show`.
-* Add `clino memory delete`.
-* Add `clino inspect latest`.
+* Add `clyno --version`.
+* Add `clyno doctor`.
+* Add `clyno memory list`.
+* Add `clyno memory show`.
+* Add `clyno memory delete`.
+* Add `clyno inspect latest`.
 * Improve README install/use instructions.
 * Add release checklist.
 * Add CI.
 
 ### Acceptance Criteria
 
-* A fresh user can install Clino and run one agent session.
-* `clino status` explains where memory is stored.
-* `clino doctor` detects common setup problems.
+* A fresh user can install Clyno and run one agent session.
+* `clyno status` explains where memory is stored.
+* `clyno doctor` detects common setup problems.
 * Users can inspect and delete stored memories.
 * Tests pass on every commit.
 
@@ -263,9 +263,9 @@ Goal: make memory safe to rely on.
 * Add stable memory IDs.
 * Show source session for each memory.
 * Mark open/resolved status clearly.
-* Add `clino resolve <query>`.
-* Add `clino memory delete <query-or-id>`.
-* Add `clino summarize --dry-run`.
+* Add `clyno resolve <query>`.
+* Add `clyno memory delete <query-or-id>`.
+* Add `clyno summarize --dry-run`.
 * Add extraction confidence labels if useful.
 * Improve stale-memory suppression.
 
@@ -280,14 +280,14 @@ Goal: make memory safe to rely on.
 
 ## Phase 3: Real Agent Dogfooding
 
-Goal: prove Clino works with real Codex/Claude sessions.
+Goal: prove Clyno works with real Codex/Claude sessions.
 
 ### Test Matrix
 
-* `clino run claude`
-* `clino run codex`
-* `clino run aider`
-* `clino run bash`
+* `clyno run claude`
+* `clyno run codex`
+* `clyno run aider`
+* `clyno run bash`
 * Ctrl+C behavior
 * Resize behavior
 * Long session transcripts
@@ -298,17 +298,17 @@ Goal: prove Clino works with real Codex/Claude sessions.
 
 ### Acceptance Criteria
 
-* Clino captures sessions without breaking terminal behavior.
+* Clyno captures sessions without breaking terminal behavior.
 * Extracted memory is useful after real sessions.
 * No ANSI/TUI noise appears in memory.
-* `clino inject` gives compact, relevant context.
+* `clyno inject` gives compact, relevant context.
 * Dogfood sessions produce actionable memories.
 
 ---
 
 ## Phase 4: Packaging and Distribution
 
-Goal: make Clino easy to install and update.
+Goal: make Clyno easy to install and update.
 
 ### Priorities
 
@@ -323,8 +323,8 @@ Goal: make Clino easy to install and update.
 
 ### Acceptance Criteria
 
-* `npm install -g clino` or equivalent works.
-* `clino --version` works.
+* `npm install -g clyno` or equivalent works.
+* `clyno --version` works.
 * CI runs tests and build.
 * A user can follow README and succeed.
 
@@ -348,9 +348,9 @@ Goal: improve relevance without jumping to heavy ML too early.
 ### Example Commands
 
 ```bash
-clino find "auth" --type decision
-clino find "GUARDRAILS" --include-resolved
-clino inject "storage" --max-items 5
+clyno find "auth" --type decision
+clyno find "GUARDRAILS" --include-resolved
+clyno inject "storage" --max-items 5
 ```
 
 ### Acceptance Criteria
@@ -392,13 +392,13 @@ Goal: add smarter retrieval only after the CLI is trustworthy.
 ## Immediate Next Tasks
 
 1. Commit current resolved-memory milestone.
-2. Add `clino --version`.
-3. Improve `clino help`.
-4. Add `clino doctor`.
-5. Add `clino memory list`.
-6. Add `clino memory show`.
-7. Add `clino memory delete`.
-8. Run a full dogfood session using `clino run claude`.
+2. Add `clyno --version`.
+3. Improve `clyno help`.
+4. Add `clyno doctor`.
+5. Add `clyno memory list`.
+6. Add `clyno memory show`.
+7. Add `clyno memory delete`.
+8. Run a full dogfood session using `clyno run claude`.
 9. Inspect resulting memory.
 10. Fix only the issues revealed by dogfooding.
 
@@ -426,13 +426,13 @@ Daily-use CLI → memory control → dogfood reliability → packaging
 The next actual task I’d give the agent is:
 
 ```txt
-Add `clino --version`, clean help output, and `clino doctor`.
+Add `clyno --version`, clean help output, and `clyno doctor`.
 ```
 
 Then after that:
 
 ```txt
-Add `clino memory list/show/delete`.
+Add `clyno memory list/show/delete`.
 ```
 
 That gives users control, which is the missing layer now.

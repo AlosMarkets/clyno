@@ -1,9 +1,9 @@
 /**
- * Clino memory-quality layer.
+ * Clyno memory-quality layer.
  *
  * Pure, side-effect-free functions that turn raw transcript text into clean,
  * human-readable project memories. Everything here runs BEFORE a memory is
- * written to disk and BEFORE it is emitted by `clino inject`, so the same
+ * written to disk and BEFORE it is emitted by `clyno inject`, so the same
  * repair / quality / dedupe rules apply on both paths.
  *
  * Pipeline: split -> classify -> repair -> quality filter -> dedupe.
@@ -642,23 +642,23 @@ export function isCursorAuthNoise(text: string): boolean {
 // Prompt template placeholder rejection
 //
 // User prompts often contain template lines like "Decision: ...", "TODO: ...",
-// "Bug: ...", "Resolved: ...", and "CLINO_MEMORY:" that the agent echoes back
+// "Bug: ...", "Resolved: ...", and "CLYNO_MEMORY:" that the agent echoes back
 // verbatim before providing real content. These are scaffolding, not project
 // memories, and are dropped from the cleaned transcript.
 // ---------------------------------------------------------------------------
 
 /**
  * Whether a line is an exact prompt template placeholder (three dots after a
- * label, bare "CLINO_MEMORY:", or the "Only include" instruction).
+ * label, bare "CLYNO_MEMORY:", or the "Only include" instruction).
  *
  * Safe:   "Decision: ..."  -> dropped
- * Kept:   "Decision: Use project-local .clino storage."  -> kept (has content)
+ * Kept:   "Decision: Use project-local .clyno storage."  -> kept (has content)
  */
 function isPromptTemplatePlaceholder(line: string): boolean {
   const t = line.trim();
   if (!t) return false;
   if (/^(Decision|TODO|Bug|Resolved):\s*\.\.\.\s*$/.test(t)) return true;
-  if (/^CLINO_MEMORY:\s*$/.test(t)) return true;
+  if (/^CLYNO_MEMORY:\s*$/.test(t)) return true;
   if (/^Only include concrete long-term project memory\.\s*Do not include general commentary\.$/.test(t)) return true;
   return false;
 }
@@ -666,7 +666,7 @@ function isPromptTemplatePlaceholder(line: string): boolean {
 export function cleanTranscriptForExtraction(raw: string): string {
   // Redact auth URLs before splitting so an embedded/compacted URL is removed in
   // full, then drop terminal-UI lines and whole Codex intro/login/auth blobs.
-  // Drop diff/code-noise, Clino-output, and session/status lines BEFORE unwrapping
+  // Drop diff/code-noise, Clyno-output, and session/status lines BEFORE unwrapping
   // so a patch line (which often ends in ";" or ",") can never be soft-joined onto
   // the prose line below it, and so spec headings reach the block pass intact.
   // Redact secrets up front (alongside auth-URL scrubbing) so multi-line PEM
@@ -686,7 +686,7 @@ export function cleanTranscriptForExtraction(raw: string): string {
         !isClaudeIntroChunk(line) &&
         !isCursorIntroChunk(line) &&
         !isDiffOrCodeNoise(line) &&
-        !isClinoOutputNoise(line) &&
+        !isClynoOutputNoise(line) &&
         !isPromptSpecDirective(line) &&
         !isPromptRequestDirective(line) &&
         !isCodexTaskChrome(line) &&
@@ -706,7 +706,7 @@ export function cleanTranscriptForExtraction(raw: string): string {
       !isClaudeIntroChunk(line) &&
       !isCursorIntroChunk(line) &&
       !isDiffOrCodeNoise(line) &&
-      !isClinoOutputNoise(line) &&
+      !isClynoOutputNoise(line) &&
       !isPromptSpecDirective(line) &&
       !isPromptRequestDirective(line) &&
       !isCodexTaskChrome(line) &&
@@ -820,20 +820,20 @@ export function isDiffOrCodeNoise(text: string): boolean {
 }
 
 // ---------------------------------------------------------------------------
-// Prompt/spec echo, Clino-output echo, and session/status metadata rejection
+// Prompt/spec echo, Clyno-output echo, and session/status metadata rejection
 //
 // A real transcript is dominated by three kinds of non-memory text:
 //   1. The user PASTES a large task spec into the agent (headings, requirement
 //      bullets, "Do not ...", command examples). Those are instructions to the
 //      coding agent, not project memories.
-//   2. Clino's OWN command output gets pasted back into the conversation
+//   2. Clyno's OWN command output gets pasted back into the conversation
 //      (memory-list rows, dry-run "Would delete ..." lines, extraction counts).
 //   3. Agent/session chrome (account, session id, rate limits, /status, the
 //      usage URL) surrounds everything.
-// All three classify (a requirement bullet "Add clino doctor" looks like a TODO,
+// All three classify (a requirement bullet "Add clyno doctor" looks like a TODO,
 // a memory-list row "decision-1 decision Use ..." looks like a decision), so they
 // must be removed before extraction. Detection stays line/format-anchored so that
-// the SAME sentence written as ordinary prose (e.g. "Need to add clino status
+// the SAME sentence written as ordinary prose (e.g. "Need to add clyno status
 // command.") still becomes a memory.
 // ---------------------------------------------------------------------------
 
@@ -863,8 +863,8 @@ export function isSessionStatusNoise(text: string): boolean {
   return SESSION_STATUS_PATTERNS.some((re) => re.test(t));
 }
 
-// Clino's own command output, recognizable by its fixed formats.
-const CLINO_OUTPUT_PATTERNS: RegExp[] = [
+// Clyno's own command output, recognizable by its fixed formats.
+const CLYNO_OUTPUT_PATTERNS: RegExp[] = [
   // Memory-list / candidate rows: "decision-1 decision Use ...", "Summary-1 summary ...".
   /^(decision|todo|bug|error|resolved|summary)-\d+\s+(decision|todo|bug|error|resolved|summary)\b/i,
   // Count headers from inspect/summarize: "decisions (9)", "summary (1)".
@@ -873,8 +873,8 @@ const CLINO_OUTPUT_PATTERNS: RegExp[] = [
   /^(decisions|todos|bugs|errors|resolved|summary|summaries)\s*:\s*\d+\s*$/i,
   // Synthesized-summary text echoed back as a candidate.
   /^this session captured\b/i,
-  // Section headers Clino prints during summarize/inspect.
-  /^clino\s+(run|find|inject|summarize|inspect|review|status|doctor|memory|--version|-v|help)\b/i,
+  // Section headers Clyno prints during summarize/inspect.
+  /^clyno\s+(run|find|inject|summarize|inspect|review|status|doctor|memory|--version|-v|help)\b/i,
   /^memory\s+(list|show|delete)\s+invalid\b/i,
   /^candidate memories\b/i,
   /^extraction counts\b/i,
@@ -889,17 +889,17 @@ const CLINO_OUTPUT_PATTERNS: RegExp[] = [
   /^backup:\s+/i,
   /^memory$/i,
   /^memory item$/i,
-  /^does not write to `?\.clino\/memory/i,
+  /^does not write to `?\.clyno\/memory/i,
   /^searching memory for\s*:/i,
   /^found \d+ relevant memory\b/i,
-  /^version:\s+clino\b/i,
+  /^version:\s+clyno\b/i,
   /^node:\s+v?\d/i,
   /^platform:\s+\w+/i,
   /^cwd:\s+\//i,
-  /^clino\s+\W+\s+local memory\b/i,
-  /^uses project-local \.clino\b/i,
-  /^clino_home can override\b/i,
-  /^\.clino\/ is ignored by git\b/i,
+  /^clyno\s+\W+\s+local memory\b/i,
+  /^uses project-local \.clyno\b/i,
+  /^clyno_home can override\b/i,
+  /^\.clyno\/ is ignored by git\b/i,
   /^diagnose common setup\b/i,
   // memory delete / dry-run output.
   /^would delete\s+(decision|todo|bug|error|resolved|summary)-\d+/i,
@@ -917,14 +917,14 @@ const CLINO_OUTPUT_PATTERNS: RegExp[] = [
 ];
 
 /**
- * Whether a line is Clino's own command output (a memory-list row, dry-run line,
- * extraction count, or a `clino ...` command invocation) rather than a project
+ * Whether a line is Clyno's own command output (a memory-list row, dry-run line,
+ * extraction count, or a `clyno ...` command invocation) rather than a project
  * memory. A leading list bullet is stripped first so bulleted rows still match.
  */
-export function isClinoOutputNoise(text: string): boolean {
+export function isClynoOutputNoise(text: string): boolean {
   const t = stripPromptListPrefix(text);
   if (!t) return false;
-  // Explicit bug reports naming clino behavior are memory, not pasted CLI output.
+  // Explicit bug reports naming clyno behavior are memory, not pasted CLI output.
   if (/^bug:\s+/i.test(t)) return false;
   if (
     /\b(writes?\s+memory\s+before|shows?\s+.+\s+(?:issue|as\s+open)|shows?\s+resolved\s+\S+\s+issue)\b/i.test(
@@ -934,7 +934,7 @@ export function isClinoOutputNoise(text: string): boolean {
     return false;
   }
   if (/\baccepts\b.*\bas memory\b/i.test(t)) return false;
-  return CLINO_OUTPUT_PATTERNS.some((re) => re.test(t));
+  return CLYNO_OUTPUT_PATTERNS.some((re) => re.test(t));
 }
 
 function stripPromptListPrefix(text: string): string {
@@ -985,7 +985,7 @@ function isPastedPromptEnvelopeEnd(text: string): boolean {
 // Standalone prompt/spec directives that survive block-shredding. Terminal redraw
 // frequently orphans a directive from its heading, so these process/style
 // instructions and goal restatements need a line-level matcher too. Kept narrow so
-// concrete project imperatives ("Use project-local .clino storage.", "Add unit
+// concrete project imperatives ("Use project-local .clyno storage.", "Add unit
 // tests for auth module.") are untouched.
 const PROMPT_SPEC_DIRECTIVE_PATTERNS: RegExp[] = [
   // "Use the existing test style.", "Use existing style." — process/style direction.
@@ -993,7 +993,7 @@ const PROMPT_SPEC_DIRECTIVE_PATTERNS: RegExp[] = [
   // "Implement Phase 1A ...", "Implement Phase 1B: ..." — pasted roadmap goal.
   /^implement\s+phase\b/i,
   // Prompt task bullets that are too generic to be durable project memory.
-  /^add\s+`?clino\s+(--version|doctor)\b/i,
+  /^add\s+`?clyno\s+(--version|doctor)\b/i,
   /^add\/update\s+tests?\b/i,
   /^add\s+tests\.?$/i,
   /^update\s+(the\s+)?readme(?:\.md)?\b.*\b(include|section|memory-management|memory management)\b/i,
@@ -1050,7 +1050,7 @@ const CODEX_TASK_CHROME_PATTERNS: RegExp[] = [
   /@filename\b/i,
   /\bgpt-5(?:\.\d+)?(?:-[\w]+)?\b/i,
   /\bmedium\s*·\s*~?\//i,
-  /·\s*~\/desktop\/clino\b/i,
+  /·\s*~\/desktop\/clyno\b/i,
 ];
 
 /** Strip Codex task-picker and model-path chrome from a single line. */
@@ -1059,7 +1059,7 @@ function redactCodexTaskChromeLine(line: string): string {
     .replace(/›\s*find and fix a bug in @filename[^\n]*/gi, '')
     .replace(/find and fix a bug in @filename[^\n]*/gi, '')
     .replace(/\bgpt-5[\w.-]*(?:-mini)?\s+\w+\s*·\s*~?\/[^\n]*/gi, '')
-    .replace(/\s*·\s*~\/desktop\/clino\b/gi, '')
+    .replace(/\s*·\s*~\/desktop\/clyno\b/gi, '')
     .replace(/[ \t]{2,}/g, ' ')
     .trim();
 }
@@ -1136,7 +1136,7 @@ export function isClaudeTaskChrome(text: string): boolean {
   const t = stripPromptListPrefix(text);
   if (!t) return false;
   if (/^bug:\s+/i.test(t)) return false;
-  if (/^todo:\s+/i.test(t) && /\bclino\b/i.test(t)) return false;
+  if (/^todo:\s+/i.test(t) && /\bclyno\b/i.test(t)) return false;
   return CLAUDE_TASK_CHROME_PATTERNS.some((re) => re.test(t)) || isClaudeIntroChunk(t);
 }
 
@@ -1209,7 +1209,7 @@ export function isReviewAnalysisSummary(text: string): boolean {
   if (/^bug:\s+/.test(t)) return false;
   if (
     /\b(unclosed|truncated|exit code|npm test|fails? with|regression|not working)\b/.test(t) &&
-    /\b(?:\.md\b|clino|guardrails|readme|inject|command)\b/.test(t)
+    /\b(?:\.md\b|clyno|guardrails|readme|inject|command)\b/.test(t)
   ) {
     return false;
   }
@@ -1223,7 +1223,7 @@ export function isReviewAnalysisSummary(text: string): boolean {
     /\btop remaining risks\b/,
     /\bnot a blocker\b/,
     /\bdocs are mostly clear\b/,
-    /\bquality issue\b(?!.*\b(?:\.md|clino|fence|unclosed|fails?|error)\b)/,
+    /\bquality issue\b(?!.*\b(?:\.md|clyno|fence|unclosed|fails?|error)\b)/,
     /\bclose on positioning\b/,
     /\bmaterial gaps?\b/,
   ].some((re) => re.test(t));
@@ -1244,7 +1244,7 @@ function isSpecBlockContinuation(text: string, previousWasBullet = false): boole
  * (markdown heading, "Label:", "Do not ...", preamble) and swallows the bullets,
  * numbered items, and blank lines beneath it. The first line that is ordinary
  * prose ends the block and is kept — so a real memory written as a sentence right
- * after a spec block (e.g. "We decided to use project-local .clino storage.")
+ * after a spec block (e.g. "We decided to use project-local .clyno storage.")
  * still survives, while the requirement bullets above it do not.
  */
 export function dropPromptSpecBlocks(lines: string[]): string[] {
@@ -1280,7 +1280,7 @@ export function dropPromptSpecBlocks(lines: string[]): string[] {
   return kept;
 }
 
-// Header labels Clino writes into every session transcript (see finalizeSession
+// Header labels Clyno writes into every session transcript (see finalizeSession
 // in index.ts) plus their plain-text equivalents. They are scaffolding, never
 // project content, so they are removed before classification and repair.
 const METADATA_LABELS = [
@@ -1464,7 +1464,7 @@ function countMeaningfulWords(text: string): number {
  * Safe (kept):
  *   "Use PTY/terminal I/O only for agent integration."
  *   "Use markdown memory files for MVP storage."
- *   "Use project-local .clino storage."
+ *   "Use project-local .clyno storage."
  *
  * Rejected:
  *   "/mcp Use /mcp to connect Cursor to your tools and data sources."
@@ -1504,7 +1504,7 @@ export function isQualityMemory(text: string, type: MemoryType): boolean {
   if (!core) return false;
   if (isTerminalUiLine(core) || isAgentProcessNarration(core) || isRuntimeStatusChrome(core)) return false;
   if (isCodexAuthNoise(core) || isClaudeAuthNoise(core) || isCursorAuthNoise(core) || isDiffOrCodeNoise(core)) return false;
-  if (isClinoOutputNoise(core) || isPromptSpecDirective(core) || isPromptRequestDirective(core)) return false;
+  if (isClynoOutputNoise(core) || isPromptSpecDirective(core) || isPromptRequestDirective(core)) return false;
   if (isCodexTaskChrome(core) || isClaudeTaskChrome(core) || isCursorTaskChrome(core) || isReviewAnalysisSummary(core) || isSessionStatusNoise(core)) {
     return false;
   }
@@ -1709,7 +1709,7 @@ function hasConcreteBugSignal(t: string): boolean {
     return false;
   }
   if (/^bug:\s+/.test(t)) return true;
-  if (/\bclino\b/.test(t) && /\b(?:accepts|shows?|writes?)\b.*\b(?:memory|open|chrome|login|ui|filtering)\b/.test(t)) {
+  if (/\bclyno\b/.test(t) && /\b(?:accepts|shows?|writes?)\b.*\b(?:memory|open|chrome|login|ui|filtering)\b/.test(t)) {
     return true;
   }
   if (/\bshows?\s+.*\b(?:as\s+open|resolved\s+\S+\s+issue)\b/.test(t)) return true;
@@ -1813,7 +1813,7 @@ export function extractSignals(content: string): ExtractedSignals {
       continue;
     }
     if (
-      isClinoOutputNoise(sentence) ||
+      isClynoOutputNoise(sentence) ||
       isPromptSpecDirective(sentence) ||
       isPromptRequestDirective(sentence) ||
       isCodexTaskChrome(sentence) ||
@@ -2100,7 +2100,7 @@ function extractTopics(rawTexts: string[], limit = 6): string[] {
       if (isJunkTopicToken(w)) continue;
       if (lw.length < 3 || TOPIC_STOP.has(lw) || seen.has(lw)) continue;
       seen.add(lw);
-      // Capitalize for readability ("clino" -> "Clino"); already-uppercase
+      // Capitalize for readability ("clyno" -> "Clyno"); already-uppercase
       // acronyms like "JWT" are preserved.
       topics.push(w.charAt(0).toUpperCase() + w.slice(1));
       if (topics.length >= limit) return topics;
