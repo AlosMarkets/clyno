@@ -8,6 +8,35 @@ It helps developers preserve, search, and rehydrate useful project context from 
 
 ---
 
+## Install & Develop
+
+Clino is a Node.js CLI. It requires **Node 18+** and is not yet published to npm,
+so install it from source:
+
+```bash
+npm install      # install dependencies (also builds via the prepare script)
+npm run build    # compile TypeScript to dist/
+npm link         # symlink the `clino` binary onto your PATH
+clino --version  # verify the install
+```
+
+`npm link` makes the `clino` command available globally from your shell. To
+remove it later, run `npm unlink -g clino`.
+
+### Usage
+
+```bash
+clino run claude       # run a coding agent through Clino and capture the session
+clino status           # show where memory is stored and a quick health summary
+clino find "auth"      # search stored memory
+clino inject "auth"    # print compact, relevant context for a new session
+```
+
+> **Privacy:** `.clino/` is project-local and ignored by Git by default.
+> Transcripts and memory stay on your machine unless you explicitly export them.
+
+---
+
 ## What Clino Is
 
 Clino is a local terminal memory tool.
@@ -182,6 +211,13 @@ Run another command through Clino:
 clino run codex
 ```
 
+Show CLI help or version:
+
+```bash
+clino help
+clino --version
+```
+
 Search memory:
 
 ```bash
@@ -200,10 +236,71 @@ Summarize a saved session:
 clino summarize .clino/sessions/2026-05-24-20-30-00.md
 ```
 
+Debug extraction quality without writing memory:
+
+```bash
+clino inspect latest
+clino summarize --dry-run .clino/sessions/2026-05-24-20-30-00.md
+clino summarize --show-cleaned .clino/sessions/2026-05-24-20-30-00.md
+```
+
+`clino inspect` shows the raw transcript path, file metadata, a cleaned-text
+preview, and extraction counts. `clino summarize --dry-run` shows the candidate
+memories and final memory files that would be written without modifying
+`.clino/memory`. Add `--show-cleaned` to print the cleaned transcript text used
+for extraction; use `--max-chars <n>` to limit large transcripts.
+
+Manage stored memory:
+
+```bash
+clino memory list
+clino memory show <id>
+clino memory delete <id>
+clino memory delete <id> --dry-run
+```
+
+Memory IDs are human-readable display IDs like `decision-1`, `todo-1`, and
+`bug-1`. Memory management is local and private: listing and showing memories
+does not create `.clino/`, and deletion only edits the selected markdown memory
+item, not raw session transcripts.
+
 Check where memory is stored and a quick health summary:
 
 ```bash
 clino status
+```
+
+Diagnose local setup, storage, and runtime checks:
+
+```bash
+clino doctor
+```
+
+Example output:
+
+```txt
+Clino doctor
+
+Version: clino 0.1.0
+Node: v22.x.x
+Platform: linux x64
+CWD: /home/you/project
+
+Storage:
+- Home: /home/you/project/.clino
+- Mode: project-local Git root
+- Git repo: yes
+- Git ignored: yes
+- Sessions dir: exists
+- Memory dir: exists
+
+Runtime:
+- node-pty: ok
+- CLI bin: ok (./dist/index.js)
+- Build output: exists (dist/index.js)
+
+Warnings:
+- none
 ```
 
 Example output:
@@ -251,19 +348,20 @@ Example structure:
     todos.md
     bugs.md
     errors.md
+    resolved.md
     summaries.md
-  index.db
-  cache/
 ```
 
 Raw transcripts live in `.clino/sessions`.
 
 Extracted project memory lives in `.clino/memory`.
 
-Search indexes and cache files live locally.
+Search is currently keyword-based over these markdown files — there is no
+database or index on disk in the MVP. (A future SQLite/FTS index is on the
+roadmap; see ROADMAP.md.)
 
-`.clino/` is **ignored by Git by default** for privacy — transcripts, memory,
-indexes, and cache stay on your machine and are never committed. You can choose
+`.clino/` is **ignored by Git by default** for privacy — transcripts and memory
+stay on your machine and are never committed. You can choose
 to export or curate-and-commit selected memory later (e.g. `git add -f` on a
 specific file), but that is an explicit, manual choice and not the MVP default.
 
@@ -274,7 +372,7 @@ projects. The Clino home directory is resolved in this order:
 2. `<git-root>/.clino`, when run inside a Git repository (found by walking up for `.git`).
 3. `<cwd>/.clino` otherwise.
 
-All commands (`run`, `summarize`, `find`, `inject`) share this resolved home.
+All commands (`run`, `inspect`, `summarize`, `memory`, `find`, `inject`, `status`, `doctor`) share this resolved home.
 `~/.clino` is no longer used for project memory; it may be reserved for global
 config later.
 
@@ -577,4 +675,3 @@ The product promise is:
 > Never explain your project to an AI coding agent twice.
 
 Every feature should support that promise while preserving user control, local-first privacy, and respect for third-party provider terms.
-

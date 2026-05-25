@@ -7,13 +7,20 @@
   "bin": {
     "clino": "./dist/index.js"
   },
+  "files": [
+    "dist/**/*.js"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
     "build": "tsc",
+    "clean": "rm -rf dist",
     "dev": "ts-node src/index.ts",
     "start": "node dist/index.js",
     "test": "tsc && node --test tests/memory-quality.test.mjs tests/run-pty.test.mjs tests/storage.test.mjs",
-    "lint": "eslint src --ext .ts",
-    "prepare": "npm run build"
+    "prepare": "npm run build",
+    "prepublishOnly": "npm run clean && npm run build && npm test"
   },
   "keywords": [
     "ai",
@@ -25,23 +32,20 @@
   ],
   "author": "Clino Contributors",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/TODO-OWNER/clino.git"
+  },
+  "bugs": {
+    "url": "https://github.com/TODO-OWNER/clino/issues"
+  },
+  "homepage": "https://github.com/TODO-OWNER/clino#readme",
   "devDependencies": {
-    "@types/jest": "^29.5.0",
     "@types/node": "^20.0.0",
-    "@typescript-eslint/eslint-plugin": "^6.0.0",
-    "@typescript-eslint/parser": "^6.0.0",
-    "eslint": "^8.0.0",
-    "jest": "^29.0.0",
-    "ts-jest": "^29.0.0",
     "ts-node": "^10.0.0",
     "typescript": "^5.0.0"
   },
   "dependencies": {
-    "chokidar": "^3.5.0",
-    "commander": "^11.0.0",
-    "gray-matter": "^4.0.0",
-    "markdown-it": "^13.0.0",
-    "node-pty": "^1.1.0",
-    "sqlite3": "^5.1.0"
+    "node-pty": "^1.1.0"
   }
 }
