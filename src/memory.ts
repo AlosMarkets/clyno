@@ -328,13 +328,361 @@ export function isCodexAuthNoise(text: string): boolean {
 export function cleanTranscriptForExtraction(raw: string): string {
   // Redact auth URLs before splitting so an embedded/compacted URL is removed in
   // full, then drop terminal-UI lines and whole Codex intro/login/auth blobs.
+  // Drop diff/code-noise, Clino-output, and session/status lines BEFORE unwrapping
+  // so a patch line (which often ends in ";" or ",") can never be soft-joined onto
+  // the prose line below it, and so spec headings reach the block pass intact.
   const lines = redactAuthUrls(stripTerminalControlSequences(raw))
     .split('\n')
     .map(normalizeTranscriptLine)
-    .filter((line) => !isTerminalUiLine(line) && !isCodexIntroChunk(line));
+    .filter(
+      (line) =>
+        !isTerminalUiLine(line) &&
+        !isCodexIntroChunk(line) &&
+        !isDiffOrCodeNoise(line) &&
+        !isClinoOutputNoise(line) &&
+        !isPromptSpecDirective(line) &&
+        !isSessionStatusNoise(line),
+    );
+
+  // Block-level pass: strip pasted prompt/spec instruction blocks (headings plus
+  // the requirement bullets beneath them) that survive line-level filtering.
+  const despecced = dropPromptSpecBlocks(lines);
+  const unwrapped = unwrapSoftWrappedLines(despecced).filter(
+    (line) =>
+      !isTerminalUiLine(line) &&
+      !isCodexIntroChunk(line) &&
+      !isDiffOrCodeNoise(line) &&
+      !isClinoOutputNoise(line) &&
+      !isPromptSpecDirective(line) &&
+      !isSessionStatusNoise(line),
+  );
 
   // Final safety pass: scrub any residual OAuth/auth query tokens.
-  return redactAuthMarkers(unwrapSoftWrappedLines(lines).join('\n'));
+  return redactAuthMarkers(unwrapped.join('\n'));
+}
+
+// ---------------------------------------------------------------------------
+// Diff / code / test-output noise rejection
+//
+// A transcript of a coding session is full of git diffs, patch hunks, test
+// assertions and test-runner output. Those fragments are not project memories,
+// but they classify (a patch line mentioning "bug"/"decision" looks like one),
+// so they must be rejected as candidates before extraction. The detection is
+// deliberately conservative: it keeps natural-language prose that merely
+// mentions code (e.g. "Fixed GUARDRAILS.md unclosed code fence.") and only drops
+// fragments that are structurally code/diff/test output.
+// ---------------------------------------------------------------------------
+
+/** Statement-shaped code: declarations, closing braces, punctuation-only lines. */
+function looksLikeCodeStatement(t: string): boolean {
+  if (
+    /^(import|export|const|let|var|function|class|interface|enum|public|private|protected|static)\b.*[=({;]/.test(
+      t,
+    )
+  ) {
+    return true;
+  }
+  if (/^type\s+\w+\s*[=:<]/.test(t)) return true; // type X = ... / type X: ...
+  if (/^(return|await|async|throw|new)\b.*[=({;'"`]/.test(t)) return true;
+  if (/^[)}\]][;,)}\]\s]*$/.test(t)) return true; // closing-bracket lines: ");", "});"
+  if (/^[{}()[\];,.<>=|&]+$/.test(t)) return true; // punctuation-only
+  return false;
+}
+
+/** Bracket/operator density typical of code rather than prose. */
+function looksPunctuationHeavyCode(t: string): boolean {
+  const brackets = (t.match(/[(){}[\]]/g) || []).length;
+  const semis = (t.match(/;/g) || []).length;
+  if (brackets + semis === 0) return false;
+  if (/^\s*[{([]/.test(t)) return true; // opens with a bracket
+  if (brackets + semis >= 5) return true; // very dense
+  if (semis >= 2) return true; // multiple statements on one line
+  if (/[\w$]\([^)]*['"`][^)]*\)/.test(t)) return true; // call("...") / call(`...`)
+  if (/[\w$]\([^)]*,[^)]*\)/.test(t)) return true; // call(a, b)
+  if (
+    /\b(assert|expect|deepEqual|doesNotMatch|writeFileSync|readFileSync|existsSync|require|console)\b/.test(t) &&
+    brackets >= 1
+  ) {
+    return true;
+  }
+  if (/(=>|===|!==)/.test(t) && brackets >= 1) return true;
+  return false;
+}
+
+/**
+ * Whether a candidate line/chunk is diff, code, or test-runner output rather than
+ * a natural-language project memory. Covers git diff headers, line-numbered patch
+ * hunks, code statements, punctuation-heavy code, progress-spinner glyph runs, and
+ * TAP/node:test runner output.
+ */
+export function isDiffOrCodeNoise(text: string): boolean {
+  const t = text.trim();
+  if (!t) return false;
+
+  // Git diff structure.
+  if (/^diff --git /.test(t)) return true;
+  if (/^index [0-9a-f]{4,}\.\.[0-9a-f]{4,}/i.test(t)) return true;
+  if (/^(---|\+\+\+)\s+["']?[ab]?[/\\]?\S/.test(t)) return true; // --- a/file  +++ b/file
+  if (/@@ -\d+(,\d+)? \+\d+(,\d+)? @@/.test(t)) return true; // hunk header (anywhere)
+
+  // Line-numbered patch lines: "347 + assert...", "653 +type ...", "379 - assert...".
+  if (/^\d+\s*[+-]\s*\S/.test(t)) return true;
+  // Two or more "<line-number> +/-" markers ⇒ a glued multi-line patch blob.
+  const markers = t.match(/(?:^|[\s;,)])\d+\s*[+-]\s/g);
+  if (markers && markers.length >= 2) return true;
+  // A single multi-digit line-number marker next to code punctuation ⇒ a patch
+  // fragment (e.g. "... memory'); 460 +" / "456 + } finally {"). The multi-digit
+  // guard keeps ordinary prose such as "3 + 4" from matching.
+  if (/(?:^|[\s;,)('"])\d{2,}\s*[+-]/.test(t) && /[(){}[\];]/.test(t)) return true;
+
+  // Test-runner output (node:test / TAP).
+  if (/^#\s*(tests?|pass(?:ed)?|fail(?:ed|ures)?|suites?|skipped|todo|cancelled|duration_ms|subtest)\b/i.test(t)) {
+    return true;
+  }
+  if (/^(?:ok|not ok)\s+\d+\b/i.test(t)) return true;
+  if (/^1\.\.\d+\s*$/.test(t)) return true; // TAP plan line
+
+  // Progress-spinner / glyph noise glued onto a line.
+  if ((t.match(/[•·]/g) || []).length >= 4) return true;
+  if (/^`{3,}\w*$/.test(t)) return true; // markdown code fence
+
+  // Bare paths/file names from diffs, file lists, or memory file output.
+  if (/^(?:\.{1,2}[/\\])?[\w.-]+(?:[/\\][\w.-]+)+$/.test(t)) return true;
+  if (/^[\w.-]+\.[a-z0-9]{1,5}$/i.test(t)) return true;
+
+  // Code-shaped content. Strip a single leading diff marker first so that
+  // "+ assert.equal(x)" is treated as code while "+ Fixed ..." prose is kept.
+  const body = t.replace(/^[+-]\s+/, '').trim();
+  if (looksLikeCodeStatement(body)) return true;
+  if (looksPunctuationHeavyCode(body)) return true;
+
+  return false;
+}
+
+// ---------------------------------------------------------------------------
+// Prompt/spec echo, Clino-output echo, and session/status metadata rejection
+//
+// A real transcript is dominated by three kinds of non-memory text:
+//   1. The user PASTES a large task spec into the agent (headings, requirement
+//      bullets, "Do not ...", command examples). Those are instructions to the
+//      coding agent, not project memories.
+//   2. Clino's OWN command output gets pasted back into the conversation
+//      (memory-list rows, dry-run "Would delete ..." lines, extraction counts).
+//   3. Agent/session chrome (account, session id, rate limits, /status, the
+//      usage URL) surrounds everything.
+// All three classify (a requirement bullet "Add clino doctor" looks like a TODO,
+// a memory-list row "decision-1 decision Use ..." looks like a decision), so they
+// must be removed before extraction. Detection stays line/format-anchored so that
+// the SAME sentence written as ordinary prose (e.g. "Need to add clino status
+// command.") still becomes a memory.
+// ---------------------------------------------------------------------------
+
+// Agent/session/account/rate-limit chrome printed by Codex's /status and header.
+const SESSION_STATUS_PATTERNS: RegExp[] = [
+  /^>?_?\s*openai codex\b/i,            // ">_ OpenAI Codex (v0.133.0)" / "OpenAI Codex ..."
+  /^\/status\b/i,                       // the /status slash-command echo
+  /\bsettings\/usage\b/i,               // "Visit https://.../settings/usage ..."
+  /\brate limits and credits\b/i,
+  /^permissions\s*:/i,                  // "Permissions: Workspace (on-request)"
+  /^agents?\.md\s*:/i,                  // "Agents.md: <none>"
+  /^account\s*:/i,                      // "Account: user@example.com"
+  /^collaboration mode\s*:/i,           // "Collaboration mode: Default"
+  /^session\s*:\s*[0-9a-f-]{8,}/i,      // "Session: <uuid>"
+  /^\d+\s*h\s*limit\s*:/i,              // "5h limit: 37% left"
+  /^weekly limit\s*:/i,                 // "Weekly limit: 59% left"
+  /^limits\s*:/i,                       // "Limits: refresh requested; ..."
+  /^token usage\s*:/i,                  // "Token usage: total=..."
+  /^tip\s*:/i,                          // "Tip: Use /status to see ..."
+  /^codex$/i,
+];
+
+/** Whether a line is Codex/agent session/status/privacy chrome (never a memory). */
+export function isSessionStatusNoise(text: string): boolean {
+  const t = stripPromptListPrefix(text);
+  if (!t) return false;
+  return SESSION_STATUS_PATTERNS.some((re) => re.test(t));
+}
+
+// Clino's own command output, recognizable by its fixed formats.
+const CLINO_OUTPUT_PATTERNS: RegExp[] = [
+  // Memory-list / candidate rows: "decision-1 decision Use ...", "Summary-1 summary ...".
+  /^(decision|todo|bug|error|resolved|summary)-\d+\s+(decision|todo|bug|error|resolved|summary)\b/i,
+  // Count headers from inspect/summarize: "decisions (9)", "summary (1)".
+  /^(decisions|todos|bugs|errors|resolved|summary|summaries)\s*\(\d+\)\s*$/i,
+  // Count rows (after a leading bullet is stripped): "decisions: 9".
+  /^(decisions|todos|bugs|errors|resolved|summary|summaries)\s*:\s*\d+\s*$/i,
+  // Synthesized-summary text echoed back as a candidate.
+  /^this session captured\b/i,
+  // Section headers Clino prints during summarize/inspect.
+  /^clino\s+(run|find|inject|summarize|inspect|status|doctor|memory|--version|-v|help)\b/i,
+  /^candidate memories\b/i,
+  /^extraction counts\b/i,
+  /^final stored memories\b/i,
+  /^no memory files were written\b/i,
+  /^no memories found\b/i,
+  /^memory$/i,
+  /^memory item$/i,
+  /^searching memory for\s*:/i,
+  /^found \d+ relevant memory\b/i,
+  /^version:\s+clino\b/i,
+  /^node:\s+v?\d/i,
+  /^platform:\s+\w+/i,
+  /^cwd:\s+\//i,
+  /^clino\s+\W+\s+local memory\b/i,
+  /^uses project-local \.clino\b/i,
+  /^clino_home can override\b/i,
+  /^\.clino\/ is ignored by git\b/i,
+  /^diagnose common setup\b/i,
+  // memory delete / dry-run output.
+  /^would delete\s+(decision|todo|bug|error|resolved|summary)-\d+/i,
+  /^deleted\s+(decision|todo|bug|error|resolved|summary)-\d+/i,
+  // memory show output rows.
+  /^(id|type|text|status|source session|source|file path|file)\s*:/i,
+  // inject context headers.
+  /^project context\b/i,
+  /^recently resolved\b/i,
+  /^open bugs\b/i,
+  /\b(?:decisions|todos|bugs|errors|resolved|summaries?)(?:\/(?:decisions|todos|bugs|errors|resolved|summaries?|todos?)){1,}\b/i,
+  /\bmanual proof memory\b/i,
+  /\bmanual proof delete test\b/i,
+  /^the manual proof succeeded\b/i,
+];
+
+/**
+ * Whether a line is Clino's own command output (a memory-list row, dry-run line,
+ * extraction count, or a `clino ...` command invocation) rather than a project
+ * memory. A leading list bullet is stripped first so bulleted rows still match.
+ */
+export function isClinoOutputNoise(text: string): boolean {
+  const t = stripPromptListPrefix(text);
+  if (!t) return false;
+  return CLINO_OUTPUT_PATTERNS.some((re) => re.test(t));
+}
+
+function stripPromptListPrefix(text: string): string {
+  return text
+    .trim()
+    .replace(/^[-*+•]\s+/, '')
+    .replace(/^›\s*/, '')
+    .replace(/^\$\s+/, '')
+    .trim();
+}
+
+// Known section labels of a pasted prompt/spec. "remaining" is deliberately
+// excluded: it is a legitimate TODO lead-in ("remaining: add unit tests ...").
+const SPEC_LABEL_RE =
+  /^(goal|tasks?|requirements?|acceptance criteria|verification|verify|before editing|already implemented|important docs?|current project state|context|behaviou?r|safety|constraints?|scope|deliverables?|steps?|output should show|optional flags?|examples?|example output|suggested help shape|show|run|expected|manual proof|storage|privacy|changed files|command outputs?|known limitations?|approach|root cause)\s*:/i;
+
+const BARE_SPEC_HEADING_RE =
+  /^(changed files|verification|manual proof|known limitations|command outputs?|examples rejected|examples preserved|tests added|root cause)$/i;
+
+/**
+ * A line that OPENS (or continues) a pasted prompt/spec block: a markdown
+ * heading, any "Label:" line, a known spec section label, a "Do not ..."
+ * prohibition, or the "We are working on ..." preamble. These are document
+ * structure / instructions and are never memories on their own.
+ */
+function isPromptSpecHeading(text: string): boolean {
+  const t = stripPromptListPrefix(text);
+  if (!t) return false;
+  if (/^#{1,6}\s+\S/.test(t)) return true;       // markdown heading: "## 1. Add ..."
+  if (/:$/.test(t)) return true;                 // any "Label:" line introducing a list
+  if (SPEC_LABEL_RE.test(t)) return true;        // "Goal: ...", "Run: ...", "Verification: ..."
+  if (BARE_SPEC_HEADING_RE.test(t)) return true; // final-report/spec headings without colons
+  if (/^do\s+not\b/i.test(t)) return true;       // "Do not add embeddings, SQLite, ..."
+  if (/^we are working on\b/i.test(t)) return true;
+  return false;
+}
+
+function isPastedPromptEnvelopeStart(text: string): boolean {
+  const t = stripPromptListPrefix(text);
+  return /\[pasted content \d+ chars\]/i.test(t) || /^we are working on\b/i.test(t);
+}
+
+function isPastedPromptEnvelopeEnd(text: string): boolean {
+  const t = text.trim();
+  return /^•\s+/.test(t) || /^(search|list|read|edited|ran|waited|updated plan)\b/i.test(t);
+}
+
+// Standalone prompt/spec directives that survive block-shredding. Terminal redraw
+// frequently orphans a directive from its heading, so these process/style
+// instructions and goal restatements need a line-level matcher too. Kept narrow so
+// concrete project imperatives ("Use project-local .clino storage.", "Add unit
+// tests for auth module.") are untouched.
+const PROMPT_SPEC_DIRECTIVE_PATTERNS: RegExp[] = [
+  // "Use the existing test style.", "Use existing style." — process/style direction.
+  /\buse\s+(the\s+)?existing\b[^.]*\b(styles?|patterns?|conventions?|approach)\b/i,
+  // "Implement Phase 1A ...", "Implement Phase 1B: ..." — pasted roadmap goal.
+  /^implement\s+phase\b/i,
+  // Prompt task bullets that are too generic to be durable project memory.
+  /^add\s+`?clino\s+(--version|doctor)\b/i,
+  /^add\/update\s+tests?\b/i,
+  /^add\s+tests\.?$/i,
+  /^update\s+(the\s+)?readme(?:\.md)?\b.*\b(include|section|memory-management|memory management)\b/i,
+  /^add\s+(stable display ids?|a short section|a short debugging section)\b/i,
+  /^keep refactor minimal\b/i,
+  /^prefer minimal disruption\b/i,
+  /^do the simplest reliable version\b/i,
+  /^no new dependencies\b/i,
+  /^emphasize user control and privacy\b/i,
+];
+
+/** Whether a line is a pasted prompt/spec process directive or goal restatement. */
+export function isPromptSpecDirective(text: string): boolean {
+  const t = stripPromptListPrefix(text);
+  if (!t) return false;
+  return PROMPT_SPEC_DIRECTIVE_PATTERNS.some((re) => re.test(t));
+}
+
+/** A line that continues an open spec block: a bullet, a numbered item, or blank. */
+function isSpecBlockContinuation(text: string, previousWasBullet = false): boolean {
+  const t = text.trim();
+  if (!t) return true;                           // blank line keeps the block open
+  if (/^[-*+•]\s+/.test(t)) return true;         // bullet item
+  if (/^\d+[.)]\s+/.test(t)) return true;        // numbered / lettered list item
+  if (previousWasBullet && /^[a-z0-9`.-]/.test(t)) return true; // soft-wrapped bullet continuation
+  return false;
+}
+
+/**
+ * Remove pasted prompt/spec instruction blocks. A block opens at a spec heading
+ * (markdown heading, "Label:", "Do not ...", preamble) and swallows the bullets,
+ * numbered items, and blank lines beneath it. The first line that is ordinary
+ * prose ends the block and is kept — so a real memory written as a sentence right
+ * after a spec block (e.g. "We decided to use project-local .clino storage.")
+ * still survives, while the requirement bullets above it do not.
+ */
+export function dropPromptSpecBlocks(lines: string[]): string[] {
+  const kept: string[] = [];
+  let inBlock = false;
+  let inPromptEnvelope = false;
+  let previousWasBullet = false;
+  for (const line of lines) {
+    if (inPromptEnvelope) {
+      if (!isPastedPromptEnvelopeEnd(line)) continue;
+      inPromptEnvelope = false;
+    }
+    if (isPastedPromptEnvelopeStart(line)) {
+      inPromptEnvelope = true;
+      continue;
+    }
+    if (isPromptSpecHeading(line)) {
+      inBlock = true;
+      previousWasBullet = false;
+      continue; // drop the heading / label / directive itself
+    }
+    if (inBlock) {
+      if (isSpecBlockContinuation(line, previousWasBullet)) {
+        const t = line.trim();
+        previousWasBullet = previousWasBullet || /^[-*+•]\s+/.test(t);
+        continue; // drop bullets / numbered / blank / wrapped bullet tails
+      }
+      inBlock = false; // ordinary prose ends the block; fall through to keep it
+      previousWasBullet = false;
+    }
+    kept.push(line);
+  }
+  return kept;
 }
 
 // Header labels Clino writes into every session transcript (see finalizeSession
@@ -368,6 +716,7 @@ export function stripMetadataPrefix(line: string): string {
 /** Pure metadata values that carry no meaning once the label is gone. */
 function isBareMetadataValue(s: string): boolean {
   if (!s) return true;
+  if (/^codex$/i.test(s)) return true;
   if (/^\d+(\s*\(signal\s+\d+\))?$/i.test(s)) return true; // exit code, e.g. "0" / "130 (signal 2)"
   if (/^\d{4}-\d{2}-\d{2}t[\d:.\-z]+$/i.test(s)) return true; // ISO timestamp
   return false;
@@ -524,7 +873,8 @@ export function isQualityMemory(text: string, type: MemoryType): boolean {
   const core = text.trim().replace(/^[-*+•]\s+/, '').replace(/[.!?]+$/, '').trim();
   if (!core) return false;
   if (isTerminalUiLine(core) || isAgentProcessNarration(core)) return false;
-  if (isCodexAuthNoise(core)) return false;
+  if (isCodexAuthNoise(core) || isDiffOrCodeNoise(core)) return false;
+  if (isClinoOutputNoise(core) || isPromptSpecDirective(core) || isSessionStatusNoise(core)) return false;
   if (type === 'bugs' && !hasConcreteBugSignal(core.toLowerCase())) return false;
 
   // Forbidden starts (defense in depth — repair should already remove these).
@@ -697,9 +1047,11 @@ function isAgentProcessNarration(sentence: string): boolean {
     /^now\s+(i['’]?ll|i will)\s+(read|inspect|check|look|review|scan|open|run|do|give)\b/,
     /^(i['’]?ve|i have)\s+got\b/,
     /^(i['’]?m|i am)\s+(doing|checking|reading|inspecting|looking|running|making|going)\b/,
+    /^i\s+(also\s+)?made\b/,
     /^let me\s+(check|inspect|look|read|open|run)\b/,
     /^i can see\b/,
     /^i found\b/,
+    /^the test run\b/,
   ].some((re) => re.test(t));
 }
 
@@ -733,7 +1085,8 @@ function hasResolutionSignal(t: string): boolean {
 
 /** Route a sentence to exactly one memory bucket (or null to drop it). */
 export function classifySentence(sentence: string): MemoryType | null {
-  const t = sentence.toLowerCase();
+  const plain = plainCandidateText(sentence);
+  const t = plain.toLowerCase();
 
   if (hasResolutionSignal(t)) {
     return 'resolved';
@@ -744,7 +1097,7 @@ export function classifySentence(sentence: string): MemoryType | null {
     /^error\b/.test(t) ||
     /\bexception\b/.test(t) ||
     /\bfailed\b/.test(t) ||
-    /\bat\s+\S+:\d+:\d+/.test(sentence)
+    /\bat\s+\S+:\d+:\d+/.test(plain)
   ) {
     return 'errors';
   }
@@ -787,7 +1140,8 @@ export function extractSignals(content: string): ExtractedSignals {
 
   for (const sentence of sentences) {
     if (isAgentProcessNarration(sentence)) continue;
-    if (isCodexAuthNoise(sentence)) continue;
+    if (isCodexAuthNoise(sentence) || isDiffOrCodeNoise(sentence)) continue;
+    if (isClinoOutputNoise(sentence) || isPromptSpecDirective(sentence) || isSessionStatusNoise(sentence)) continue;
     const category = classifySentence(sentence);
     if (!category) continue;
     const repaired = repairMemoryText(sentence);
