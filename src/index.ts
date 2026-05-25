@@ -169,6 +169,8 @@ Usage:
   clino memory rebuild [--dry-run]
   clino find <query>
   clino inject <query>
+  clino resolve <id>
+  clino resolve <query>
   clino status
   clino doctor
   clino --version
@@ -198,6 +200,8 @@ Examples:
   clino memory rebuild --dry-run
   clino find "auth bug"
   clino inject "storage"
+  clino resolve todo-1
+  clino resolve "clino status command"
   clino status
 
 Storage:
@@ -2535,15 +2539,52 @@ switch (command) {
   }
 
   case 'resolve': {
-    if (!process.argv[3]) {
-      console.error('Usage: clino resolve <query>');
+    const query = process.argv[3];
+    if (!query) {
+      console.error('Usage: clino resolve <id>');
+      console.error('       clino resolve <query>');
       process.exit(1);
     }
     ensureClinoDirs();
-    const resolveQuery = process.argv.slice(3).join(' ');
-    const resolved = repairMemoryText(`Resolved ${resolveQuery}`);
+
+    // Check if argument is a memory ID (e.g. todo-5, bug-1)
+    const idMatch = query.match(/^(todo|bug|decision|error|resolved|summary)-(\d+)$/i);
+    if (idMatch) {
+      const fullId = idMatch[1].toLowerCase() + '-' + idMatch[2];
+      const item = findMemoryItem(fullId);
+      if (!item) {
+        console.error(`❌ Memory item not found: ${query}`);
+        process.exit(1);
+      }
+      if (item.type !== 'todo' && item.type !== 'bug') {
+        console.error('❌ Only open todos and bugs can be resolved.');
+        process.exit(1);
+      }
+      if (item.resolved) {
+        console.log(`Already resolved: ${item.text}`);
+        break;
+      }
+
+      const resolvedText = repairMemoryText(`Resolved: ${item.text}`);
+      if (!isQualityMemory(resolvedText, 'resolved')) {
+        console.error(`❌ Could not create a useful resolved memory for: "${item.text}"`);
+        process.exit(1);
+      }
+
+      writeMemoryFile('resolved.md', [resolvedText], 'manual');
+      console.log(`Resolved ${fullId}:`);
+      console.log(`  ${item.text}`);
+      console.log('');
+      console.log('Created resolved memory:');
+      console.log(`  ${resolvedText}`);
+      break;
+    }
+
+    // Text-based resolve (existing behavior)
+    const resolveText = process.argv.slice(3).join(' ');
+    const resolved = repairMemoryText(`Resolved ${resolveText}`);
     if (!isQualityMemory(resolved, 'resolved')) {
-      console.error(`❌ Could not create a useful resolved memory for: "${resolveQuery}"`);
+      console.error(`❌ Could not create a useful resolved memory for: "${resolveText}"`);
       process.exit(1);
     }
     writeMemoryFile('resolved.md', [resolved], 'manual');

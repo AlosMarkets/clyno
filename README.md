@@ -394,6 +394,31 @@ Try:
 `clino status` is read-only — it never creates `.clino/` or any memory file, so
 you can run it in a fresh project to see the resolved path and zero counts.
 
+### Resolving stale memory
+
+```bash
+clino resolve todo-1
+clino resolve bug-1
+clino resolve "clino status command"
+```
+
+Mark an open TODO or bug as completed. When you `clino resolve <id>`, Clino:
+- Creates a resolved memory entry preserving the original text
+- Suppresses the open item from `clino inject` output (shows it under Recently Resolved instead)
+- Keeps the original TODO/bug in place — nothing is deleted
+
+Resolved items are also matched by text. The command `clino resolve "status command"` creates a resolved marker that suppresses any open TODO containing those keywords.
+
+Example:
+```txt
+$ clino resolve todo-1
+Resolved todo-1:
+  Add clino status command.
+
+Created resolved memory:
+  Resolved: Add clino status command.
+```
+
 ---
 
 ## Local Storage

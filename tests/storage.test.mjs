@@ -2039,3 +2039,241 @@ test('README search prefers direct README memories over broader docs aliases', (
     rmSync(work, { recursive: true, force: true });
   }
 });
+
+// ---------------------------------------------------------------------------
+// clino resolve
+// ---------------------------------------------------------------------------
+
+test('resolve: resolving a todo by ID creates a resolved memory', () => {
+  const work = tmp('clino-resolve-todo-id-');
+  const memDir = join(work, '.clino', 'memory');
+  mkdirSync(memDir, { recursive: true });
+  writeFileSync(
+    join(memDir, 'todos.md'),
+    '---\ntype: todos\ndate: 2026-05-25\nsource: test.md\n---\n\n' +
+      '- Add clino status command.\n',
+  );
+  try {
+    const res = clino(['resolve', 'todo-1'], { cwd: work });
+    assert.equal(res.code ?? 0, 0);
+    assert.match(res.stdout, /Resolved todo-1/);
+    assert.match(res.stdout, /Add clino status command/);
+    assert.match(res.stdout, /Created resolved memory/);
+    assert.match(res.stdout, /Resolved: Add clino status command/);
+
+    const resolvedFile = join(memDir, 'resolved.md');
+    assert.ok(existsSync(resolvedFile));
+    const content = readFileSync(resolvedFile, 'utf8');
+    assert.match(content, /Resolved: Add clino status command\./);
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+});
+
+test('resolve: resolving a bug by ID creates a resolved memory', () => {
+  const work = tmp('clino-resolve-bug-id-');
+  const memDir = join(work, '.clino', 'memory');
+  mkdirSync(memDir, { recursive: true });
+  writeFileSync(
+    join(memDir, 'bugs.md'),
+    '---\ntype: bugs\ndate: 2026-05-25\nsource: test.md\n---\n\n' +
+      '- GUARDRAILS.md has an unclosed code fence.\n',
+  );
+  try {
+    const res = clino(['resolve', 'bug-1'], { cwd: work });
+    assert.equal(res.code ?? 0, 0);
+    assert.match(res.stdout, /Resolved bug-1/);
+    assert.match(res.stdout, /GUARDRAILS\.md has an unclosed code fence/);
+    assert.match(res.stdout, /Created resolved memory/);
+    assert.match(res.stdout, /Resolved: GUARDRAILS\.md has an unclosed code fence/);
+
+    const resolvedFile = join(memDir, 'resolved.md');
+    assert.ok(existsSync(resolvedFile));
+    const content = readFileSync(resolvedFile, 'utf8');
+    assert.match(content, /Resolved: GUARDRAILS\.md has an unclosed code fence\./);
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+});
+
+test('resolve: resolved todo is suppressed from inject open TODOs', () => {
+  const work = tmp('clino-resolve-suppress-todo-');
+  const memDir = join(work, '.clino', 'memory');
+  mkdirSync(memDir, { recursive: true });
+  writeFileSync(
+    join(memDir, 'todos.md'),
+    '---\ntype: todos\ndate: 2026-05-25\nsource: test.md\n---\n\n' +
+      '- Add clino status command.\n',
+  );
+  try {
+    const res = clino(['resolve', 'todo-1'], { cwd: work });
+    assert.equal(res.code ?? 0, 0);
+
+    const injected = clino(['inject', 'status'], { cwd: work });
+    assert.doesNotMatch(injected.stdout, /## Open Todos/);
+    assert.match(injected.stdout, /## Recently Resolved/);
+    assert.match(injected.stdout, /Resolved: Add clino status command\./);
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+});
+
+test('resolve: resolved bug is suppressed from inject open bugs', () => {
+  const work = tmp('clino-resolve-suppress-bug-');
+  const memDir = join(work, '.clino', 'memory');
+  mkdirSync(memDir, { recursive: true });
+  writeFileSync(
+    join(memDir, 'bugs.md'),
+    '---\ntype: bugs\ndate: 2026-05-25\nsource: test.md\n---\n\n' +
+      '- GUARDRAILS.md has an unclosed code fence.\n',
+  );
+  try {
+    const res = clino(['resolve', 'bug-1'], { cwd: work });
+    assert.equal(res.code ?? 0, 0);
+
+    const injected = clino(['inject', 'GUARDRAILS'], { cwd: work });
+    assert.doesNotMatch(injected.stdout, /## Open Bugs/);
+    assert.match(injected.stdout, /## Recently Resolved/);
+    assert.match(injected.stdout, /Resolved: GUARDRAILS\.md has an unclosed code fence\./);
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+});
+
+test('resolve: memory list labels the original item as [resolved]', () => {
+  const work = tmp('clino-resolve-list-label-');
+  const memDir = join(work, '.clino', 'memory');
+  mkdirSync(memDir, { recursive: true });
+  writeFileSync(
+    join(memDir, 'todos.md'),
+    '---\ntype: todos\ndate: 2026-05-25\nsource: test.md\n---\n\n' +
+      '- Add clino status command.\n',
+  );
+  try {
+    const res = clino(['resolve', 'todo-1'], { cwd: work });
+    assert.equal(res.code ?? 0, 0);
+
+    const listed = clino(['memory', 'list'], { cwd: work });
+    assert.match(listed.stdout, /todo-1\s+todo\s+Add clino status command\. \[resolved\]/);
+    assert.match(listed.stdout, /resolved-1\s+resolved\s+Resolved: Add clino status command\./);
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+});
+
+test('resolve: invalid ID exits nonzero and writes nothing', () => {
+  const work = tmp('clino-resolve-invalid-id-');
+  const memDir = join(work, '.clino', 'memory');
+  mkdirSync(memDir, { recursive: true });
+  writeFileSync(
+    join(memDir, 'todos.md'),
+    '---\ntype: todos\ndate: 2026-05-25\nsource: test.md\n---\n\n' +
+      '- Add clino status command.\n',
+  );
+  try {
+    const res = clino(['resolve', 'todo-999'], { cwd: work });
+    assert.notEqual(res.code ?? 0, 0);
+    assert.match(res.stderr, /not found/);
+
+    const resolvedFile = join(memDir, 'resolved.md');
+    assert.ok(!existsSync(resolvedFile), 'resolved.md should not be created');
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+});
+
+test('resolve: resolving decision ID exits nonzero and writes nothing', () => {
+  const work = tmp('clino-resolve-decision-id-');
+  const memDir = join(work, '.clino', 'memory');
+  mkdirSync(memDir, { recursive: true });
+  writeFileSync(
+    join(memDir, 'decisions.md'),
+    '---\ntype: decisions\ndate: 2026-05-25\nsource: test.md\n---\n\n' +
+      '- Use project-local .clino storage.\n',
+  );
+  try {
+    const res = clino(['resolve', 'decision-1'], { cwd: work });
+    assert.notEqual(res.code ?? 0, 0);
+    assert.match(res.stderr, /Only open todos and bugs can be resolved/);
+
+    const resolvedFile = join(memDir, 'resolved.md');
+    assert.ok(!existsSync(resolvedFile), 'resolved.md should not be created');
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+});
+
+test('resolve: resolving already resolved item no-ops', () => {
+  const work = tmp('clino-resolve-already-');
+  const memDir = join(work, '.clino', 'memory');
+  mkdirSync(memDir, { recursive: true });
+  writeFileSync(
+    join(memDir, 'todos.md'),
+    '---\ntype: todos\ndate: 2026-05-25\nsource: test.md\n---\n\n' +
+      '- Add clino status command.\n',
+  );
+  writeFileSync(
+    join(memDir, 'resolved.md'),
+    '---\ntype: resolved\ndate: 2026-05-25\nsource: manual\n---\n\n' +
+      '- Resolved: Add clino status command.\n',
+  );
+  try {
+    const res = clino(['resolve', 'todo-1'], { cwd: work });
+    assert.equal(res.code ?? 0, 0);
+    assert.match(res.stdout, /Already resolved/);
+
+    // resolved.md should still have exactly one entry
+    const content = readFileSync(join(memDir, 'resolved.md'), 'utf8');
+    const matches = content.match(/- Resolved: Add clino status command\./g);
+    assert.equal(matches?.length ?? 0, 1, 'should not duplicate resolved entry');
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+});
+
+test('resolve: duplicate idempotency does not duplicate resolved memory', () => {
+  const work = tmp('clino-resolve-idempotent-');
+  const memDir = join(work, '.clino', 'memory');
+  mkdirSync(memDir, { recursive: true });
+  writeFileSync(
+    join(memDir, 'todos.md'),
+    '---\ntype: todos\ndate: 2026-05-25\nsource: test.md\n---\n\n' +
+      '- Add clino status command.\n',
+  );
+  try {
+    const res1 = clino(['resolve', 'todo-1'], { cwd: work });
+    assert.equal(res1.code ?? 0, 0);
+
+    const res2 = clino(['resolve', 'todo-1'], { cwd: work });
+    assert.equal(res2.code ?? 0, 0);
+    assert.match(res2.stdout, /Already resolved/);
+
+    const content = readFileSync(join(memDir, 'resolved.md'), 'utf8');
+    const matches = content.match(/- Resolved: Add clino status command\./g);
+    assert.equal(matches?.length ?? 0, 1, 'should not duplicate resolved entry');
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+});
+
+test('resolve: CLINO_HOME respected', () => {
+  const work = tmp('clino-resolve-home-');
+  const memDir = join(work, 'memory');
+  mkdirSync(memDir, { recursive: true });
+  writeFileSync(
+    join(memDir, 'todos.md'),
+    '---\ntype: todos\ndate: 2026-05-25\nsource: test.md\n---\n\n' +
+      '- Add clino status command.\n',
+  );
+  try {
+    const res = clino(['resolve', 'todo-1'], { clinoHome: work });
+    assert.equal(res.code ?? 0, 0);
+    assert.match(res.stdout, /Resolved todo-1/);
+
+    const resolvedFile = join(memDir, 'resolved.md');
+    assert.ok(existsSync(resolvedFile));
+    assert.match(readFileSync(resolvedFile, 'utf8'), /Resolved: Add clino status command\./);
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+});
