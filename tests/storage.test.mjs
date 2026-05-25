@@ -119,6 +119,102 @@ test('summarize writes memory into the resolved home', () => {
   }
 });
 
+// ---------------------------------------------------------------------------
+// clino status
+// ---------------------------------------------------------------------------
+
+test('status: empty project shows the resolved path and zero counts', () => {
+  const work = tmp('clino-status-empty-');
+  try {
+    const { code, stdout } = clino(['status'], { cwd: work });
+    assert.equal(code ?? 0, 0);
+    // Reports where memory *would* live without creating it.
+    assert.match(stdout, new RegExp(`Home: ${join(work, '.clino')}`.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+    assert.match(stdout, /Sessions: 0/);
+    assert.match(stdout, /Memory files: 0/);
+    assert.match(stdout, /- decisions: 0/);
+    assert.match(stdout, /- summaries: 0/);
+    assert.match(stdout, /Try:/);
+    // Read-only: status must not create the directory just to report on it.
+    assert.ok(!existsSync(join(work, '.clino')), 'status does not create .clino');
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+});
+
+test('status: counts sessions and memory items that exist', () => {
+  const work = tmp('clino-status-full-');
+  const sessionsDir = join(work, '.clino', 'sessions');
+  const memDir = join(work, '.clino', 'memory');
+  mkdirSync(sessionsDir, { recursive: true });
+  mkdirSync(memDir, { recursive: true });
+  writeFileSync(join(sessionsDir, '2026-05-25-00-00-00.md'), '# Session\n');
+  writeFileSync(
+    join(memDir, 'decisions.md'),
+    '---\ntype: decisions\n---\n\n- Use project-local .clino storage.\n',
+  );
+  writeFileSync(join(memDir, 'todos.md'), '---\ntype: todos\n---\n\n- Add clino status command.\n');
+  writeFileSync(
+    join(memDir, 'summaries.md'),
+    '---\ntype: summaries\n---\n\nThis session captured 1 decision and 1 TODO.\n',
+  );
+  try {
+    const { code, stdout } = clino(['status'], { cwd: work });
+    assert.equal(code ?? 0, 0);
+    assert.match(stdout, /Sessions: 1/);
+    assert.match(stdout, /Memory files: 3/);
+    assert.match(stdout, /- decisions: 1/);
+    assert.match(stdout, /- todos: 1/);
+    assert.match(stdout, /- bugs: 0/);
+    assert.match(stdout, /- errors: 0/);
+    assert.match(stdout, /- summaries: 1/);
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+});
+
+test('status: reflects the CLINO_HOME override', () => {
+  const home = tmp('clino-status-home-');
+  const work = tmp('clino-status-work-');
+  // A git repo in cwd proves Git-repo detection is independent of the override.
+  mkdirSync(join(work, '.git'), { recursive: true });
+  try {
+    const { code, stdout } = clino(['status'], { cwd: work, clinoHome: home });
+    assert.equal(code ?? 0, 0);
+    assert.match(stdout, new RegExp(`Home: ${home}`.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+    assert.match(stdout, /Storage mode: custom \(CLINO_HOME\)/);
+    assert.match(stdout, /CLINO_HOME override: active/);
+    assert.match(stdout, /Git repo: yes/);
+    assert.match(stdout, /Git ignored: n\/a \(custom CLINO_HOME\)/);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+    rmSync(work, { recursive: true, force: true });
+  }
+});
+
+test('status: detects whether .clino is git-ignored', () => {
+  // Ignored: a repo whose .gitignore lists `.clino/`.
+  const ignoredRepo = tmp('clino-status-ign-');
+  mkdirSync(join(ignoredRepo, '.git'), { recursive: true });
+  writeFileSync(join(ignoredRepo, '.gitignore'), 'node_modules/\n.clino/\n');
+  // Not ignored: a repo whose .gitignore does not mention `.clino`.
+  const trackedRepo = tmp('clino-status-trk-');
+  mkdirSync(join(trackedRepo, '.git'), { recursive: true });
+  writeFileSync(join(trackedRepo, '.gitignore'), 'node_modules/\n');
+  try {
+    const ignored = clino(['status'], { cwd: ignoredRepo });
+    assert.match(ignored.stdout, /Git repo: yes/);
+    assert.match(ignored.stdout, /Git ignored: yes/);
+
+    const tracked = clino(['status'], { cwd: trackedRepo });
+    assert.match(tracked.stdout, /Git repo: yes/);
+    assert.match(tracked.stdout, /Git ignored: no/);
+  } finally {
+    rmSync(ignoredRepo, { recursive: true, force: true });
+    rmSync(trackedRepo, { recursive: true, force: true });
+  }
+});
+
 test('find and inject read from the same resolved home', () => {
   const work = tmp('clino-read-');
   const memDir = join(work, '.clino', 'memory');

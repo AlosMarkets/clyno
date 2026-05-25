@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 
 import { spawn } from 'node-pty';
+import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync } from 'node:fs';
-import { join, dirname } from 'node:path';
+import { join, dirname, relative } from 'node:path';
 
 import {
   extractSignals,
@@ -56,10 +57,16 @@ const SESSIONS_DIR = join(CLINO_DIR, 'sessions');
 const MEMORY_DIR = join(CLINO_DIR, 'memory');
 const PROCESSED_SESSIONS_FILE = join(CLINO_DIR, 'processed.sessions');
 
-// Ensure directories exist
-[CLINO_DIR, SESSIONS_DIR, MEMORY_DIR].forEach((dir) => {
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-});
+/**
+ * Create the Clino state directories on demand. Only the writing commands
+ * (`run`, `summarize`) call this; read-only commands (`status`, `find`, `inject`)
+ * never create `.clino/` just to inspect or report on it.
+ */
+function ensureClinoDirs(): void {
+  [CLINO_DIR, SESSIONS_DIR, MEMORY_DIR].forEach((dir) => {
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  });
+}
 
 // Load processed sessions
 const processedSessions: Set<string> = new Set();
@@ -208,6 +215,7 @@ function finalizeSession(
   exitCode: number,
   signal?: number,
 ): void {
+  ensureClinoDirs();
   const endedAt = new Date();
   const timestamp = startedAt.toISOString().replace(/[:.]/g, '-');
   const sessionFile = join(SESSIONS_DIR, `${timestamp}.md`);
@@ -249,6 +257,7 @@ function extractInsights(
 ): { decisions: number; todos: number; bugs: number; errors: number } {
   if (!opts.quiet) console.log('🔍 Extracting insights from session...');
 
+  ensureClinoDirs();
   const content = readFileSync(sessionFilePath, 'utf8');
   const signals = extractSignals(content);
 
@@ -322,6 +331,8 @@ function searchMemory(query: string): Array<{ file: string; matches: string[] }>
   const q = query.toLowerCase();
   const results: Array<{ file: string; matches: string[] }> = [];
 
+  if (!existsSync(MEMORY_DIR)) return results; // nothing captured yet
+
   readdirSync(MEMORY_DIR).forEach((file) => {
     if (!file.endsWith('.md')) return;
     const body = stripFrontmatter(readFileSync(join(MEMORY_DIR, file), 'utf8'));
@@ -376,6 +387,108 @@ function generateContext(query: string, maxChars = 3000): string {
 }
 
 // ---------------------------------------------------------------------------
+// Status
+// ---------------------------------------------------------------------------
+
+/** Count `.md` files in a directory, treating a missing directory as zero. */
+function countMarkdown(dir: string): number {
+  if (!existsSync(dir)) return 0;
+  return readdirSync(dir).filter((f) => f.endsWith('.md')).length;
+}
+
+/** Count stored bullet memories in a memory file (0 if the file is absent). */
+function countMemoryItems(filename: string): number {
+  const filePath = join(MEMORY_DIR, filename);
+  if (!existsSync(filePath)) return 0;
+  return parseMemoryItems(readFileSync(filePath, 'utf8')).length;
+}
+
+/**
+ * Count stored summaries. Summaries are written as a single synthesized
+ * paragraph rather than bullets, so report presence (0 or 1) instead.
+ */
+function countSummaries(filename: string): number {
+  const filePath = join(MEMORY_DIR, filename);
+  if (!existsSync(filePath)) return 0;
+  return stripFrontmatter(readFileSync(filePath, 'utf8')).trim() ? 1 : 0;
+}
+
+/** True if a root `.gitignore` has an uncommented entry for `.clino`. */
+function gitignoreHasClino(gitRoot: string): boolean {
+  const giPath = join(gitRoot, '.gitignore');
+  if (!existsSync(giPath)) return false;
+  return readFileSync(giPath, 'utf8')
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => l && !l.startsWith('#'))
+    .some((l) => l.replace(/^\//, '').replace(/\/$/, '') === '.clino');
+}
+
+/**
+ * Whether Git ignores the Clino directory. Prefers `git check-ignore` (which
+ * also honors nested ignores and excludes); if the git binary is unavailable or
+ * the repo can't be read, falls back to scanning the root `.gitignore`.
+ */
+function detectClinoIgnored(gitRoot: string, clinoDir: string): boolean {
+  const rel = relative(gitRoot, clinoDir);
+  if (!rel || rel.startsWith('..')) return false; // outside the repo
+  const res = spawnSync('git', ['-C', gitRoot, 'check-ignore', '--', rel], {
+    encoding: 'utf8',
+  });
+  if (res.status === 0) return true;
+  if (res.status === 1) return false;
+  return gitignoreHasClino(gitRoot); // git missing / repo unreadable
+}
+
+/**
+ * Print where Clino stores memory for this project plus a quick health summary.
+ * Read-only: it never creates `.clino/` or any memory file, so the resolved home
+ * is reported even when nothing has been captured yet (all counts show zero).
+ */
+function printStatus(): void {
+  const overrideActive = Boolean(process.env.CLINO_HOME);
+  const gitRoot = findGitRoot(process.cwd());
+  const inGitRepo = gitRoot !== null;
+
+  const storageMode = overrideActive
+    ? 'custom (CLINO_HOME)'
+    : inGitRepo
+      ? 'project-local'
+      : 'project-local (no git repo)';
+
+  // `.clino/` ignore status is only meaningful for a project-local home inside a
+  // repo; a custom CLINO_HOME or no repo makes it not applicable.
+  let ignored: string;
+  if (overrideActive) ignored = 'n/a (custom CLINO_HOME)';
+  else if (!inGitRepo) ignored = 'n/a (not a git repo)';
+  else ignored = detectClinoIgnored(gitRoot, CLINO_DIR) ? 'yes' : 'no';
+
+  const lines = [
+    'Clino status',
+    '',
+    `Home: ${CLINO_DIR}`,
+    `Storage mode: ${storageMode}`,
+    `CLINO_HOME override: ${overrideActive ? 'active' : 'not set'}`,
+    `Git repo: ${inGitRepo ? 'yes' : 'no'}`,
+    `Git ignored: ${ignored}`,
+    '',
+    `Sessions: ${countMarkdown(SESSIONS_DIR)}`,
+    `Memory files: ${countMarkdown(MEMORY_DIR)}`,
+    `- decisions: ${countMemoryItems('decisions.md')}`,
+    `- todos: ${countMemoryItems('todos.md')}`,
+    `- bugs: ${countMemoryItems('bugs.md')}`,
+    `- errors: ${countMemoryItems('errors.md')}`,
+    `- summaries: ${countSummaries('summaries.md')}`,
+    '',
+    'Try:',
+    '- clino find "auth"',
+    '- clino inject "storage"',
+    '- clino run claude',
+  ];
+  console.log(lines.join('\n'));
+}
+
+// ---------------------------------------------------------------------------
 // CLI
 // ---------------------------------------------------------------------------
 
@@ -425,6 +538,11 @@ switch (command) {
     break;
   }
 
+  case 'status': {
+    printStatus();
+    break;
+  }
+
   case 'inject': {
     if (!process.argv[3]) {
       console.error('Usage: clino inject <query> [--max-chars <number>]');
@@ -453,6 +571,7 @@ Usage:
   clino summarize <file>        Extract insights from a session file
   clino find <query>            Search memory for relevant information
   clino inject <query> [--max-chars <number>]  Generate compact context for agent injection
+  clino status                  Show storage location and a memory health summary
 
 Examples:
   clino run codex
@@ -461,5 +580,6 @@ Examples:
   clino find "auth bug"
   clino inject "auth-system"
   clino inject "auth" --max-chars 6000
+  clino status
 `);
 }

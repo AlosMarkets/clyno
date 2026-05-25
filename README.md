@@ -200,6 +200,40 @@ Summarize a saved session:
 clino summarize .clino/sessions/2026-05-24-20-30-00.md
 ```
 
+Check where memory is stored and a quick health summary:
+
+```bash
+clino status
+```
+
+Example output:
+
+```txt
+Clino status
+
+Home: /home/you/project/.clino
+Storage mode: project-local
+CLINO_HOME override: not set
+Git repo: yes
+Git ignored: yes
+
+Sessions: 1
+Memory files: 3
+- decisions: 1
+- todos: 1
+- bugs: 0
+- errors: 0
+- summaries: 1
+
+Try:
+- clino find "auth"
+- clino inject "storage"
+- clino run claude
+```
+
+`clino status` is read-only — it never creates `.clino/` or any memory file, so
+you can run it in a fresh project to see the resolved path and zero counts.
+
 ---
 
 ## Local Storage
