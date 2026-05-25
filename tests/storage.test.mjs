@@ -110,6 +110,18 @@ function writeSessionFixture(work, name, transcript) {
   return sessionFile;
 }
 
+function writeHomeSessionFixture(home, name, transcript) {
+  const sessionsDir = join(home, 'sessions');
+  mkdirSync(sessionsDir, { recursive: true });
+  const sessionFile = join(sessionsDir, name);
+  writeFileSync(sessionFile, `# Session\n\n## Transcript\n\n\`\`\`\n${transcript}\n\`\`\`\n`);
+  return sessionFile;
+}
+
+function readIfExists(path) {
+  return existsSync(path) ? readFileSync(path, 'utf8') : null;
+}
+
 // ---------------------------------------------------------------------------
 // CLI polish
 // ---------------------------------------------------------------------------
@@ -781,6 +793,208 @@ test('find and inject read from the same resolved home', () => {
   }
 });
 
+test('memory rebuild --dry-run: no sessions exits clearly without creating storage', () => {
+  const work = tmp('clino-rebuild-empty-');
+  try {
+    const { code, stdout, stderr } = clino(['memory', 'rebuild', '--dry-run'], { cwd: work });
+    assert.equal(code, 1);
+    assert.equal(stdout, '');
+    assert.match(stderr, /No session transcripts found/);
+    assert.match(stderr, /Memory rebuild needs at least one \.md session transcript/);
+    assert.match(stderr, /No files were changed\./);
+    assert.ok(!existsSync(join(work, '.clino')), 'dry-run with no sessions does not create .clino');
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+});
+
+test('memory rebuild --dry-run: previews rebuilt memory without modifying files', () => {
+  const work = tmp('clino-rebuild-dry-');
+  try {
+    const memDir = writeMemoryFixture(work);
+    const beforeDecisions = readFileSync(join(memDir, 'decisions.md'), 'utf8');
+    const beforeTodos = readFileSync(join(memDir, 'todos.md'), 'utf8');
+    const beforeBugs = readFileSync(join(memDir, 'bugs.md'), 'utf8');
+    writeSessionFixture(
+      work,
+      'rebuild.md',
+      'We decided to use dry-run previews for memory rebuilds and need to add rebuild tests.',
+    );
+
+    const { code, stdout, stderr } = clino(['memory', 'rebuild', '--dry-run'], { cwd: work });
+    assert.equal(code ?? 0, 0);
+    assert.equal(stderr, '');
+    assert.match(stdout, /Clino memory rebuild dry run/);
+    assert.match(stdout, /Sessions: 1/);
+    assert.match(stdout, /Current memory:\n- decisions: 1\n- todos: 1\n- bugs: 1/m);
+    assert.match(stdout, /Rebuilt memory:\n- decisions: 1\n- todos: 1\n- bugs: 0/m);
+    assert.match(stdout, /Memory to write:/);
+    assert.match(stdout, /Use dry-run previews for memory rebuilds\./);
+    assert.match(stdout, /Add rebuild tests\./);
+    assert.match(stdout, /No files were changed\./);
+    assert.equal(readFileSync(join(memDir, 'decisions.md'), 'utf8'), beforeDecisions);
+    assert.equal(readFileSync(join(memDir, 'todos.md'), 'utf8'), beforeTodos);
+    assert.equal(readFileSync(join(memDir, 'bugs.md'), 'utf8'), beforeBugs);
+    assert.ok(!existsSync(join(work, '.clino', 'backups')), 'dry-run does not create backups');
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+});
+
+test('memory rebuild: backs up old memory before replacing it', () => {
+  const work = tmp('clino-rebuild-backup-');
+  try {
+    const memDir = writeMemoryFixture(work);
+    writeSessionFixture(work, 'new.md', 'We decided to use rebuilt memory from raw sessions.');
+
+    const { code, stdout, stderr } = clino(['memory', 'rebuild'], { cwd: work });
+    assert.equal(code ?? 0, 0);
+    assert.equal(stderr, '');
+    assert.match(stdout, /Clino memory rebuilt/);
+    assert.match(stdout, /Sessions: 1/);
+    assert.match(stdout, /New memory:\n- decisions: 1/m);
+
+    const backupPath = stdout.match(/^Backup: (.+)$/m)?.[1];
+    assert.ok(backupPath, 'prints backup path');
+    assert.match(backupPath, new RegExp(`${escapeRegExp(join(work, '.clino', 'backups'))}/memory-\\d{4}-\\d{2}-\\d{2}T\\d{2}-\\d{2}-\\d{2}`));
+    assert.match(readFileSync(join(backupPath, 'decisions.md'), 'utf8'), /Use project-local \.clino storage\./);
+    assert.match(readFileSync(join(memDir, 'decisions.md'), 'utf8'), /Use rebuilt memory from raw sessions\./);
+    assert.doesNotMatch(readFileSync(join(memDir, 'decisions.md'), 'utf8'), /Use project-local \.clino storage\./);
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+});
+
+test('memory rebuild: removes stale polluted memory rejected by current extraction', () => {
+  const work = tmp('clino-rebuild-polluted-');
+  const memDir = join(work, '.clino', 'memory');
+  mkdirSync(memDir, { recursive: true });
+  writeFileSync(
+    join(memDir, 'bugs.md'),
+    '---\ntype: bugs\n---\n\n' +
+      '- Memory show invalid ID.\n' +
+      '- Does not write to `.clino/memory\n' +
+      '- 691 + decision: Use stale polluted memory.\n',
+  );
+  writeFileSync(
+    join(memDir, 'errors.md'),
+    '---\ntype: errors\n---\n\n' +
+      '- Memory extraction for decisions/todos/bugs/errors/summaries/resolved.\n',
+  );
+  try {
+    writeSessionFixture(
+      work,
+      'pollution.md',
+      [
+        'Memory extraction for decisions/todos/bugs/errors/summaries/resolved',
+        'Memory list with decisions/todos/bugs/resolved/summaries',
+        'Memory show invalid ID.',
+        'Memory delete invalid ID.',
+        'Does not write to `.clino/memory',
+        '691 + decision: Use stale polluted memory.',
+        'OpenAI Codex (v0.133.0)',
+        '/status',
+        'Account: user@example.com',
+        'We decided to keep Clino private-by-default.',
+      ].join('\n'),
+    );
+
+    const rebuilt = clino(['memory', 'rebuild'], { cwd: work });
+    assert.equal(rebuilt.code ?? 0, 0);
+    assert.equal(readIfExists(join(memDir, 'bugs.md')), null);
+    assert.equal(readIfExists(join(memDir, 'errors.md')), null);
+
+    const listed = clino(['memory', 'list'], { cwd: work });
+    assert.match(listed.stdout, /Keep Clino private-by-default\./);
+    assert.doesNotMatch(listed.stdout, /Memory show invalid ID/);
+    assert.doesNotMatch(listed.stdout, /Does not write to/);
+    assert.doesNotMatch(listed.stdout, /stale polluted memory/);
+    assert.doesNotMatch(listed.stdout, /\berror-1\b/);
+    assert.doesNotMatch(listed.stdout, /\bbug-1\b/);
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+});
+
+test('memory rebuild: preserves legitimate decisions, todos, and resolved memories', () => {
+  const work = tmp('clino-rebuild-preserve-');
+  try {
+    writeSessionFixture(
+      work,
+      'decision-todo.md',
+      'We decided to keep Clino private-by-default and need to add a manual memory review workflow.',
+    );
+    writeSessionFixture(work, 'resolved.md', 'Fixed GUARDRAILS.md unclosed code fence.');
+
+    const { code, stderr } = clino(['memory', 'rebuild'], { cwd: work });
+    assert.equal(code ?? 0, 0);
+    assert.equal(stderr, '');
+
+    const listed = clino(['memory', 'list'], { cwd: work });
+    assert.match(listed.stdout, /decision-1\s+decision\s+Keep Clino private-by-default\./);
+    assert.match(listed.stdout, /todo-1\s+todo\s+Add a manual memory review workflow\./);
+    assert.match(listed.stdout, /resolved-1\s+resolved\s+Fixed GUARDRAILS\.md unclosed code fence\./);
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+});
+
+test('memory rebuild: dedupes memories across sessions', () => {
+  const work = tmp('clino-rebuild-dedupe-');
+  try {
+    writeSessionFixture(work, 'one.md', 'We decided to use JWT auth because it is stateless.');
+    writeSessionFixture(work, 'two.md', 'We decided to use JWT auth because it is stateless.');
+
+    const { code } = clino(['memory', 'rebuild'], { cwd: work });
+    assert.equal(code ?? 0, 0);
+
+    const decisions = readFileSync(join(work, '.clino', 'memory', 'decisions.md'), 'utf8');
+    assert.equal((decisions.match(/Use JWT auth because it is stateless\./g) ?? []).length, 1);
+    const listed = clino(['memory', 'list'], { cwd: work });
+    assert.match(listed.stdout, /decision-1\s+decision\s+Use JWT auth because it is stateless\./);
+    assert.doesNotMatch(listed.stdout, /decision-2/);
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+});
+
+test('memory rebuild: respects CLINO_HOME', () => {
+  const home = tmp('clino-rebuild-home-');
+  const work = tmp('clino-rebuild-work-');
+  try {
+    writeHomeSessionFixture(home, 'home.md', 'We decided to keep CLINO_HOME rebuilds isolated.');
+    const memDir = join(home, 'memory');
+    mkdirSync(memDir, { recursive: true });
+    writeFileSync(join(memDir, 'todos.md'), '---\ntype: todos\n---\n\n- Old home memory.\n');
+
+    const { code, stdout, stderr } = clino(['memory', 'rebuild'], { cwd: work, clinoHome: home });
+    assert.equal(code ?? 0, 0);
+    assert.equal(stderr, '');
+    assert.match(stdout, new RegExp(`Backup: ${escapeRegExp(join(home, 'backups'))}/memory-`));
+    assert.match(readFileSync(join(home, 'memory', 'decisions.md'), 'utf8'), /Keep CLINO_HOME rebuilds isolated\./);
+    assert.ok(!existsSync(join(work, '.clino')), 'cwd storage is untouched when CLINO_HOME is set');
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+    rmSync(work, { recursive: true, force: true });
+  }
+});
+
+test('memory rebuild: does not delete raw session transcripts', () => {
+  const work = tmp('clino-rebuild-sessions-');
+  try {
+    const sessionFile = writeSessionFixture(work, 'keep.md', 'We decided to keep raw sessions untouched.');
+    const before = readFileSync(sessionFile, 'utf8');
+
+    const { code } = clino(['memory', 'rebuild'], { cwd: work });
+    assert.equal(code ?? 0, 0);
+    assert.ok(existsSync(sessionFile), 'session file still exists');
+    assert.equal(readFileSync(sessionFile, 'utf8'), before);
+    assert.deepEqual(readdirSync(join(work, '.clino', 'sessions')), ['keep.md']);
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+});
+
 test('find and inject use lightweight documentation aliases', () => {
   const work = tmp('clino-alias-');
   const memDir = join(work, '.clino', 'memory');
@@ -807,6 +1021,25 @@ test('find and inject use lightweight documentation aliases', () => {
 
     const guardrails = clino(['find', 'guardrails'], { cwd: work });
     assert.match(guardrails.stdout, /GUARDRAILS\.md/, 'guardrails query finds guardrails memory');
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+});
+
+test('inject preserves synthesized summaries without re-repairing them', () => {
+  const work = tmp('clino-summary-inject-');
+  const memDir = join(work, '.clino', 'memory');
+  mkdirSync(memDir, { recursive: true });
+  writeFileSync(
+    join(memDir, 'summaries.md'),
+    '---\ntype: summaries\ndate: 2026-05-25\nsource: sessions/*\n---\n\n' +
+      '- This session captured 1 resolved item. Focus areas: GUARDRAILS.md, code fence, documentation.\n',
+  );
+  try {
+    const injected = clino(['inject', 'GUARDRAILS'], { cwd: work });
+    assert.match(injected.stdout, /## Summary/);
+    assert.match(injected.stdout, /This session captured 1 resolved item/);
+    assert.doesNotMatch(injected.stdout, /## Summary\n-\s*\n/);
   } finally {
     rmSync(work, { recursive: true, force: true });
   }

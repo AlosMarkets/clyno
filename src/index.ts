@@ -1,7 +1,16 @@
 #!/usr/bin/env node
 
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, statSync } from 'node:fs';
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { createRequire } from 'node:module';
 import { join, dirname, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -150,6 +159,7 @@ Usage:
   clino memory list [--type <type>] [--include-resolved]
   clino memory show <id>
   clino memory delete <id> [--dry-run]
+  clino memory rebuild [--dry-run]
   clino find <query>
   clino inject <query>
   clino status
@@ -168,6 +178,7 @@ Examples:
   clino summarize --dry-run .clino/sessions/2026-05-24-20-30-00.md
   clino memory list
   clino memory show decision-1
+  clino memory rebuild --dry-run
   clino find "auth bug"
   clino inject "storage"
   clino status
@@ -926,12 +937,16 @@ function generateContext(query: string, maxChars = 3000): string {
     const title = FILE_TITLES[key] || key;
 
     // Re-apply the quality/dedupe layer at inject time (defense in depth).
-    let items = dedupeMemories(
-      result.matches
-        .map((m) => m.replace(/^[-*]\s+/, '').trim())
-        .map(repairMemoryText)
-        .filter((m) => key === 'summaries' || isQualityMemory(m, key as MemoryType)),
-    );
+    // Summaries are already synthesized text and intentionally match the Clino
+    // output-noise guard used by extraction, so they must not be repaired again.
+    let items = key === 'summaries'
+      ? dedupeMemories(result.matches.map((m) => m.replace(/^[-*]\s+/, '').trim()).filter(Boolean))
+      : dedupeMemories(
+          result.matches
+            .map((m) => m.replace(/^[-*]\s+/, '').trim())
+            .map(repairMemoryText)
+            .filter((m) => isQualityMemory(m, key as MemoryType)),
+        );
     if (key === 'bugs' || key === 'todos') {
       items = items.filter((item) => {
         const resolver = allResolvedItems.find((resolved) => memoryResolvesItem(item, resolved));
@@ -1054,6 +1069,19 @@ function bulletText(line: string): string | null {
   return match ? match[1].trim() : null;
 }
 
+function summaryTextItems(body: string): Array<{ text: string; bodyLineIndex?: number }> {
+  const lines = body.split(/\r?\n/);
+  const bullets: Array<{ text: string; bodyLineIndex: number }> = [];
+  for (let i = 0; i < lines.length; i++) {
+    const text = bulletText(lines[i]);
+    if (text) bullets.push({ text, bodyLineIndex: i });
+  }
+  if (bullets.length > 0) return bullets;
+
+  const text = body.trim();
+  return text ? [{ text }] : [];
+}
+
 function nextMemoryId(type: MemoryDisplayType, counts: Map<MemoryDisplayType, number>): string {
   const count = (counts.get(type) ?? 0) + 1;
   counts.set(type, count);
@@ -1081,16 +1109,16 @@ function readAllMemoryItems(): ListedMemoryItem[] {
     if (!parsed) continue;
 
     if (descriptor.category === 'summaries') {
-      const text = parsed.body.trim();
-      if (text) {
+      for (const summary of summaryTextItems(parsed.body)) {
         items.push({
           id: nextMemoryId(descriptor.displayType, idCounts),
           type: descriptor.displayType,
           category: descriptor.category,
-          text,
+          text: summary.text,
           filePath: parsed.filePath,
           date: parsed.metadata.date,
           source: parsed.metadata.source,
+          bodyLineIndex: summary.bodyLineIndex,
         });
       }
       continue;
@@ -1120,6 +1148,250 @@ function readAllMemoryItems(): ListedMemoryItem[] {
   }
 
   return items;
+}
+
+interface MemoryCounts {
+  decisions: number;
+  todos: number;
+  bugs: number;
+  errors: number;
+  resolved: number;
+  summaries: number;
+}
+
+interface RebuildPlan {
+  sessionFiles: string[];
+  signals: ReturnType<typeof extractSignals>;
+  summaries: string[];
+  counts: MemoryCounts;
+}
+
+const REBUILD_SOURCE = 'sessions/*';
+
+function sessionTranscriptFiles(): string[] {
+  if (!existsSync(SESSIONS_DIR)) return [];
+  return readdirSync(SESSIONS_DIR)
+    .filter((file) => file.endsWith('.md'))
+    .map((file) => join(SESSIONS_DIR, file))
+    .filter((file) => {
+      try {
+        return statSync(file).isFile();
+      } catch {
+        return false;
+      }
+    })
+    .sort((a, b) => a.localeCompare(b));
+}
+
+function memoryCountsFromBuckets(
+  signals: ReturnType<typeof extractSignals>,
+  summaries: string[],
+): MemoryCounts {
+  return {
+    decisions: signals.decisions.length,
+    todos: signals.todos.length,
+    bugs: signals.bugs.length,
+    errors: signals.errors.length,
+    resolved: signals.resolved.length,
+    summaries: summaries.length,
+  };
+}
+
+function currentMemoryCounts(): MemoryCounts {
+  return {
+    decisions: countMemoryItems('decisions.md'),
+    todos: countMemoryItems('todos.md'),
+    bugs: countMemoryItems('bugs.md'),
+    errors: countMemoryItems('errors.md'),
+    resolved: countMemoryItems('resolved.md'),
+    summaries: countSummaries('summaries.md'),
+  };
+}
+
+function formatMemoryCounts(counts: MemoryCounts): string[] {
+  return [
+    `- decisions: ${counts.decisions}`,
+    `- todos: ${counts.todos}`,
+    `- bugs: ${counts.bugs}`,
+    `- errors: ${counts.errors}`,
+    `- resolved: ${counts.resolved}`,
+    `- summaries: ${counts.summaries}`,
+  ];
+}
+
+function buildRebuildPlan(sessionFiles: string[]): RebuildPlan {
+  const signals: ReturnType<typeof extractSignals> = {
+    decisions: [],
+    todos: [],
+    bugs: [],
+    errors: [],
+    resolved: [],
+  };
+  const summaries: string[] = [];
+
+  for (const sessionFile of sessionFiles) {
+    const report = buildExtractionReport(sessionFile);
+    signals.decisions.push(...report.signals.decisions);
+    signals.todos.push(...report.signals.todos);
+    signals.bugs.push(...report.signals.bugs);
+    signals.errors.push(...report.signals.errors);
+    signals.resolved.push(...report.signals.resolved);
+    if (report.summary) summaries.push(report.summary);
+  }
+
+  signals.decisions = dedupeMemories(signals.decisions);
+  signals.todos = dedupeMemories(signals.todos);
+  signals.bugs = dedupeMemories(signals.bugs);
+  signals.errors = dedupeMemories(signals.errors);
+  signals.resolved = dedupeMemories(signals.resolved);
+  const dedupedSummaries = dedupeMemories(summaries);
+
+  return {
+    sessionFiles,
+    signals,
+    summaries: dedupedSummaries,
+    counts: memoryCountsFromBuckets(signals, dedupedSummaries),
+  };
+}
+
+function printRebuildProducedMemory(plan: RebuildPlan): string[] {
+  return [
+    'Memory to write:',
+    ...printCategory('decisions', plan.signals.decisions),
+    ...printCategory('todos', plan.signals.todos),
+    ...printCategory('bugs', plan.signals.bugs),
+    ...printCategory('errors', plan.signals.errors),
+    ...printCategory('resolved', plan.signals.resolved),
+    ...printCategory('summaries', plan.summaries),
+  ];
+}
+
+function writeRebuiltBulletFile(filename: string, type: string, items: string[]): void {
+  if (items.length === 0) return;
+  const body = items.map((item) => `- ${item}`).join('\n');
+  writeFileSync(join(MEMORY_DIR, filename), frontmatter(type, REBUILD_SOURCE) + body + '\n', 'utf8');
+}
+
+function writeRebuiltSummaryFile(summaries: string[]): void {
+  if (summaries.length === 0) return;
+  const body = summaries.length === 1
+    ? summaries[0]
+    : summaries.map((summary) => `- ${summary}`).join('\n');
+  writeFileSync(
+    join(MEMORY_DIR, 'summaries.md'),
+    frontmatter('summaries', REBUILD_SOURCE) + body + '\n',
+    'utf8',
+  );
+}
+
+function writeRebuiltMemory(plan: RebuildPlan): void {
+  mkdirSync(MEMORY_DIR, { recursive: true });
+  writeRebuiltBulletFile('decisions.md', 'decisions', plan.signals.decisions);
+  writeRebuiltBulletFile('todos.md', 'todos', plan.signals.todos);
+  writeRebuiltBulletFile('bugs.md', 'bugs', plan.signals.bugs);
+  writeRebuiltBulletFile('errors.md', 'errors', plan.signals.errors);
+  writeRebuiltBulletFile('resolved.md', 'resolved', plan.signals.resolved);
+  writeRebuiltSummaryFile(plan.summaries);
+}
+
+function rebuildBackupPath(now = new Date()): string {
+  const backupsDir = join(CLINO_DIR, 'backups');
+  const stamp = now.toISOString().slice(0, 19).replace(/:/g, '-');
+  let backupPath = join(backupsDir, `memory-${stamp}`);
+  let suffix = 2;
+  while (existsSync(backupPath)) {
+    backupPath = join(backupsDir, `memory-${stamp}-${suffix}`);
+    suffix++;
+  }
+  return backupPath;
+}
+
+function backupExistingMemory(): string {
+  const backupPath = rebuildBackupPath();
+  mkdirSync(backupPath, { recursive: true });
+  if (existsSync(MEMORY_DIR)) {
+    for (const entry of readdirSync(MEMORY_DIR)) {
+      cpSync(join(MEMORY_DIR, entry), join(backupPath, entry), { recursive: true });
+    }
+  }
+  return backupPath;
+}
+
+function printNoSessionsForRebuild(dryRun: boolean): number {
+  console.error(`No session transcripts found in ${SESSIONS_DIR}.`);
+  console.error('Memory rebuild needs at least one .md session transcript.');
+  console.error('No files were changed.');
+  if (!dryRun) {
+    console.error('No backup was created.');
+  }
+  return 1;
+}
+
+function printMemoryRebuild(args: string[]): number {
+  let dryRun = false;
+  for (const arg of args) {
+    if (arg === '--dry-run') {
+      dryRun = true;
+      continue;
+    }
+    console.error(`Unknown memory rebuild option: ${arg}`);
+    console.error('Usage: clino memory rebuild [--dry-run]');
+    return 1;
+  }
+
+  const sessionFiles = sessionTranscriptFiles();
+  if (sessionFiles.length === 0) return printNoSessionsForRebuild(dryRun);
+
+  let plan: RebuildPlan;
+  try {
+    plan = buildRebuildPlan(sessionFiles);
+  } catch (err) {
+    console.error(`Could not rebuild memory: ${(err as Error).message}`);
+    console.error('No files were changed.');
+    return 1;
+  }
+
+  if (dryRun) {
+    const lines = [
+      'Clino memory rebuild dry run',
+      '',
+      `Sessions: ${plan.sessionFiles.length}`,
+      '',
+      'Current memory:',
+      ...formatMemoryCounts(currentMemoryCounts()),
+      '',
+      'Rebuilt memory:',
+      ...formatMemoryCounts(plan.counts),
+      '',
+      ...printRebuildProducedMemory(plan),
+      '',
+      'No files were changed.',
+    ];
+    console.log(lines.join('\n'));
+    return 0;
+  }
+
+  let backupPath: string;
+  try {
+    backupPath = backupExistingMemory();
+    rmSync(MEMORY_DIR, { recursive: true, force: true });
+    writeRebuiltMemory(plan);
+  } catch (err) {
+    console.error(`Could not replace memory: ${(err as Error).message}`);
+    return 1;
+  }
+
+  const lines = [
+    'Clino memory rebuilt',
+    '',
+    `Sessions: ${plan.sessionFiles.length}`,
+    `Backup: ${backupPath}`,
+    '',
+    'New memory:',
+    ...formatMemoryCounts(plan.counts),
+  ];
+  console.log(lines.join('\n'));
+  return 0;
 }
 
 function parseMemoryType(value: string): MemoryDisplayType | null {
@@ -1217,7 +1489,7 @@ function deleteMemoryItem(item: ListedMemoryItem): void {
   const parsed = readMemoryFile(descriptor);
   if (!parsed) throw new Error(`Memory file no longer exists: ${item.filePath}`);
 
-  if (item.category === 'summaries') {
+  if (item.category === 'summaries' && typeof item.bodyLineIndex !== 'number') {
     writeFileSync(parsed.filePath, `${parsed.frontmatter}\n`, 'utf8');
     return;
   }
@@ -1293,8 +1565,10 @@ function runMemoryCommand(args: string[]): number {
       return printMemoryShow(args.slice(1));
     case 'delete':
       return printMemoryDelete(args.slice(1));
+    case 'rebuild':
+      return printMemoryRebuild(args.slice(1));
     default:
-      console.error('Usage: clino memory <list|show|delete>');
+      console.error('Usage: clino memory <list|show|delete|rebuild>');
       return 1;
   }
 }
@@ -1323,7 +1597,8 @@ function countMemoryItems(filename: string): number {
 function countSummaries(filename: string): number {
   const filePath = join(MEMORY_DIR, filename);
   if (!existsSync(filePath)) return 0;
-  return stripFrontmatter(readFileSync(filePath, 'utf8')).trim() ? 1 : 0;
+  const parsed = parseFrontmatter(readFileSync(filePath, 'utf8'));
+  return summaryTextItems(parsed.body).length;
 }
 
 /** True if a root `.gitignore` has an uncommented entry for `.clino`. */

@@ -264,6 +264,20 @@ Memory IDs are human-readable display IDs like `decision-1`, `todo-1`, and
 does not create `.clino/`, and deletion only edits the selected markdown memory
 item, not raw session transcripts.
 
+Memory rebuild:
+
+```bash
+clino memory rebuild --dry-run
+clino memory rebuild
+```
+
+Use rebuild after Clino's extraction filters improve and older `.clino/memory`
+files contain stale noisy memories. The dry run reads all raw transcripts in
+`.clino/sessions`, shows the memory that would be produced, and does not modify
+files. A real rebuild leaves raw sessions untouched, backs up the old memory to
+`.clino/backups/memory-YYYY-MM-DDTHH-mm-ss/`, then replaces `.clino/memory`
+using the current extraction logic.
+
 Check where memory is stored and a quick health summary:
 
 ```bash
