@@ -8,6 +8,7 @@ import {
   extractSignals,
   synthesizeSummary,
   parseMemoryItems,
+  stripMetadataPrefix,
 } from '../dist/memory.js';
 
 // --------------------------------------------------------------------------
@@ -156,4 +157,95 @@ test('parseMemoryItems: ignores YAML frontmatter and tags', () => {
     '- Use JWT auth because it is stateless.',
   ].join('\n');
   assert.deepEqual(parseMemoryItems(file), ['Use JWT auth because it is stateless.']);
+});
+
+// --------------------------------------------------------------------------
+// 7. Dogfood regression: transcript metadata must not pollute memory
+// --------------------------------------------------------------------------
+test('metadata: strips transcript header labels (bold and plain forms)', () => {
+  assert.equal(
+    stripMetadataPrefix('**Arguments:** We decided to use X'),
+    'We decided to use X',
+  );
+  assert.equal(stripMetadataPrefix('Arguments: We decided to use X'), 'We decided to use X');
+  assert.equal(stripMetadataPrefix('**Command:** git status'), 'git status');
+  assert.equal(stripMetadataPrefix('**Exit code:** 0'), '0');
+  // A line with no metadata label is returned unchanged.
+  assert.equal(stripMetadataPrefix('We decided to use X'), 'We decided to use X');
+});
+
+test('repair: strips metadata prefix before repairing the content', () => {
+  assert.equal(
+    repairMemoryText('**Arguments:** We decided to use project-local .clino storage'),
+    'Use project-local .clino storage.',
+  );
+  assert.equal(
+    repairMemoryText('Arguments: We decided to use project-local .clino storage'),
+    'Use project-local .clino storage.',
+  );
+  assert.equal(
+    repairMemoryText('We decided to use project-local .clino storage'),
+    'Use project-local .clino storage.',
+  );
+});
+
+test('dogfood: plain sentence -> clean decision + todo', () => {
+  const signals = extractSignals(
+    'We decided to use project-local .clino storage and need to add clino status command',
+  );
+  assert.deepEqual(signals.decisions, ['Use project-local .clino storage.']);
+  assert.deepEqual(signals.todos, ['Add clino status command.']);
+  // No "**Arguments:**" or "We decided to use..." leaks into stored memory.
+  for (const list of Object.values(signals)) {
+    for (const m of list) {
+      assert.doesNotMatch(m, /\*\*|arguments/i);
+      assert.doesNotMatch(m, /^we decided to use/i);
+    }
+  }
+});
+
+test('dogfood: transcript-style "**Arguments:**" line -> same clean memory', () => {
+  const signals = extractSignals(
+    '**Arguments:** We decided to use project-local .clino storage and need to add clino status command',
+  );
+  assert.deepEqual(signals.decisions, ['Use project-local .clino storage.']);
+  assert.deepEqual(signals.todos, ['Add clino status command.']);
+});
+
+test('dogfood: full transcript dedupes header line against the body line', () => {
+  // Mirrors a real session file: a metadata header plus the echoed transcript.
+  const transcript = [
+    '# Coding Agent Session',
+    '',
+    '**Agent:** echo',
+    '**Arguments:** We decided to use project-local .clino storage and need to add clino status command',
+    '**Started:** 2026-05-25T00-00-00-000Z',
+    '**Exit code:** 0',
+    '',
+    '## Transcript',
+    '',
+    '```',
+    'We decided to use project-local .clino storage and need to add clino status command',
+    '```',
+  ].join('\n');
+  const signals = extractSignals(transcript);
+  // The junk-vs-clean subsume bug used to keep the polluted version; now the
+  // header and body collapse to one clean memory each.
+  assert.deepEqual(signals.decisions, ['Use project-local .clino storage.']);
+  assert.deepEqual(signals.todos, ['Add clino status command.']);
+});
+
+test('dogfood: focus areas exclude metadata/junk words', () => {
+  const signals = extractSignals(
+    'We decided to use project-local .clino storage and need to add clino status command',
+  );
+  const summary = synthesizeSummary(signals);
+  assert.match(summary, /1 decision and 1 TODO/);
+  // Hard requirement: no metadata/junk focus terms.
+  for (const junk of ['arguments', 'decided', 'project', 'local', 'command', 'exit']) {
+    assert.doesNotMatch(summary, new RegExp(junk, 'i'), `focus areas must not include "${junk}"`);
+  }
+  // Meaningful terms survive.
+  assert.match(summary, /Clino/);
+  assert.match(summary, /storage/i);
 });

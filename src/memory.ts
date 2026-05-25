@@ -70,6 +70,63 @@ function isCommandLike(text: string): boolean {
 }
 
 // ---------------------------------------------------------------------------
+// Transcript metadata stripping
+// ---------------------------------------------------------------------------
+
+// Header labels Clino writes into every session transcript (see finalizeSession
+// in index.ts) plus their plain-text equivalents. They are scaffolding, never
+// project content, so they are removed before classification and repair.
+const METADATA_LABELS = [
+  'agent', 'command', 'arguments', 'args', 'exit code', 'started', 'ended',
+];
+
+// Matches a leading label in either the markdown-bold form `**Arguments:**` or
+// the bare form `Arguments:` (case-insensitive).
+const METADATA_PREFIX_RE = new RegExp(
+  '^\\s*\\*{0,2}\\s*(?:' + METADATA_LABELS.join('|') + ')\\s*:\\s*\\*{0,2}\\s*',
+  'i',
+);
+
+/**
+ * Strip a leading transcript-metadata label from a single line. Returns the
+ * useful remainder when the line is "label: <content>", or the line unchanged
+ * when no metadata label is present.
+ *
+ *   "**Arguments:** We decided to use X" -> "We decided to use X"
+ *   "Command: git status"                -> "git status"
+ *   "We decided to use X"                -> "We decided to use X" (unchanged)
+ */
+export function stripMetadataPrefix(line: string): string {
+  const stripped = line.replace(METADATA_PREFIX_RE, '');
+  return stripped === line ? line : stripped.trim();
+}
+
+/** Pure metadata values that carry no meaning once the label is gone. */
+function isBareMetadataValue(s: string): boolean {
+  if (!s) return true;
+  if (/^\d+(\s*\(signal\s+\d+\))?$/i.test(s)) return true; // exit code, e.g. "0" / "130 (signal 2)"
+  if (/^\d{4}-\d{2}-\d{2}t[\d:.\-z]+$/i.test(s)) return true; // ISO timestamp
+  return false;
+}
+
+/**
+ * Remove transcript-metadata header lines before extraction. A line that is only
+ * metadata (label with no content, a timestamp, or an exit code) is dropped; a
+ * line that is "label: <useful content>" keeps just the content so real prose
+ * (e.g. the agent's arguments) still flows into classification.
+ */
+export function stripTranscriptMetadata(content: string): string {
+  return content
+    .split('\n')
+    .map((line) => {
+      const remainder = stripMetadataPrefix(line);
+      if (remainder === line) return line; // no metadata label present
+      return isBareMetadataValue(remainder) ? '' : remainder;
+    })
+    .join('\n');
+}
+
+// ---------------------------------------------------------------------------
 // Repair: raw fragment -> clean human-readable note
 // ---------------------------------------------------------------------------
 
@@ -122,6 +179,9 @@ const LEAD_INS: RegExp[] = [
 export function repairMemoryText(raw: string): string {
   if (!raw) return '';
   let t = raw.replace(/\r/g, '').replace(/\s+/g, ' ').trim();
+  // Drop a transcript-metadata label ("**Arguments:**", "Command:", …) if the
+  // fragment slipped through with one attached, then keep repairing the content.
+  t = stripMetadataPrefix(t);
   t = t.replace(/^[-*+]\s+/, '');
   t = t.replace(/^["'`]+/, '').replace(/["'`]+$/, '').trim();
 
@@ -403,7 +463,8 @@ export function classifySentence(sentence: string): MemoryType | null {
  * low-quality ever reaches storage or injection.
  */
 export function extractSignals(content: string): ExtractedSignals {
-  const sentences = splitCompoundSentences(splitIntoSentences(content));
+  const cleaned = stripTranscriptMetadata(content);
+  const sentences = splitCompoundSentences(splitIntoSentences(cleaned));
   const buckets: ExtractedSignals = { decisions: [], todos: [], bugs: [], errors: [] };
 
   for (const sentence of sentences) {
@@ -433,6 +494,11 @@ const TOPIC_STOP = new Set([
   'while', 'unable', 'not', 'bug', 'bugs', 'error', 'errors', 'issue', 'issues',
   'problem', 'todo', 'fixme', 'specified', 'type', 'users', 'user', 'unable',
   'thing', 'things', 'stuff',
+  // Transcript-metadata words and generic extraction verbs must never surface as
+  // focus areas (e.g. "Arguments", "decided", "project", "local").
+  'agent', 'command', 'arguments', 'args', 'exit', 'started', 'ended',
+  'decided', 'decide', 'chose', 'choose', 'agreed', 'opted', 'project', 'local',
+  'want', 'plan', 'ought',
 ]);
 
 function extractTopics(texts: string[], limit = 6): string[] {
@@ -444,7 +510,9 @@ function extractTopics(texts: string[], limit = 6): string[] {
       const lw = w.toLowerCase();
       if (lw.length < 3 || TOPIC_STOP.has(lw) || seen.has(lw)) continue;
       seen.add(lw);
-      topics.push(w);
+      // Capitalize for readability ("clino" -> "Clino"); already-uppercase
+      // acronyms like "JWT" are preserved.
+      topics.push(w.charAt(0).toUpperCase() + w.slice(1));
       if (topics.length >= limit) return topics;
     }
   }
