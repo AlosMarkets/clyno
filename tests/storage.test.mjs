@@ -16,6 +16,9 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const CLI = join(__dirname, '..', 'dist', 'index.js');
+const PACKAGE = JSON.parse(readFileSync(join(__dirname, '..', 'package.json'), 'utf8'));
+
+const escapeRegExp = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 /**
  * Invoke clino with a chosen working directory and (optionally) CLINO_HOME.
@@ -44,6 +47,195 @@ function markGitRoot(dir) {
   mkdirSync(gitDir, { recursive: true });
   writeFileSync(join(gitDir, 'HEAD'), 'ref: refs/heads/main\n');
 }
+
+function writeMemoryFixture(work) {
+  const memDir = join(work, '.clino', 'memory');
+  mkdirSync(memDir, { recursive: true });
+  writeFileSync(
+    join(memDir, 'decisions.md'),
+    '---\ntype: decisions\ndate: 2026-05-25\nsource: sessions/test.md\n---\n\n' +
+      '- Use project-local .clino storage.\n',
+  );
+  writeFileSync(
+    join(memDir, 'todos.md'),
+    '---\ntype: todos\ndate: 2026-05-25\nsource: sessions/test.md\n---\n\n' +
+      '- Add clino status command.\n',
+  );
+  writeFileSync(
+    join(memDir, 'bugs.md'),
+    '---\ntype: bugs\ndate: 2026-05-25\nsource: sessions/test.md\n---\n\n' +
+      '- GUARDRAILS.md has an unclosed code fence.\n',
+  );
+  writeFileSync(
+    join(memDir, 'errors.md'),
+    '---\ntype: errors\ndate: 2026-05-25\nsource: sessions/test.md\n---\n\n' +
+      '- Module type not specified.\n',
+  );
+  writeFileSync(
+    join(memDir, 'resolved.md'),
+    '---\ntype: resolved\ndate: 2026-05-25\nsource: sessions/fixed.md\n---\n\n' +
+      '- Fixed GUARDRAILS.md unclosed code fence.\n',
+  );
+  writeFileSync(
+    join(memDir, 'summaries.md'),
+    '---\ntype: summaries\ndate: 2026-05-25\nsource: sessions/test.md\n---\n\n' +
+      'This session captured project-local storage work.\n',
+  );
+  return memDir;
+}
+
+function writeSessionFixture(work, name, transcript) {
+  const sessionsDir = join(work, '.clino', 'sessions');
+  mkdirSync(sessionsDir, { recursive: true });
+  const sessionFile = join(sessionsDir, name);
+  writeFileSync(
+    sessionFile,
+    [
+      '# Coding Agent Session',
+      '',
+      '**Agent:** echo',
+      '**Arguments:** debug extraction',
+      '**Started:** 2026-05-25T10:00:00.000Z',
+      '**Ended:** 2026-05-25T10:00:02.000Z',
+      '**Exit code:** 0',
+      '',
+      '## Transcript',
+      '',
+      '```',
+      transcript,
+      '```',
+      '',
+    ].join('\n'),
+  );
+  return sessionFile;
+}
+
+// ---------------------------------------------------------------------------
+// CLI polish
+// ---------------------------------------------------------------------------
+
+test('version flags print the package version', () => {
+  const work = tmp('clino-version-');
+  try {
+    for (const args of [['--version'], ['-v']]) {
+      const { code, stdout, stderr } = clino(args, { cwd: work });
+      assert.equal(code ?? 0, 0);
+      assert.equal(stdout.trim(), `clino ${PACKAGE.version}`);
+      assert.equal(stderr, '');
+    }
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+});
+
+test('help commands show clean help', () => {
+  const work = tmp('clino-help-');
+  try {
+    for (const args of [['help'], ['--help'], ['-h']]) {
+      const { code, stdout, stderr } = clino(args, { cwd: work });
+      assert.equal(code ?? 0, 0);
+      assert.equal(stderr, '');
+      assert.match(stdout, /Clino .* local memory for terminal coding agents/);
+      assert.match(stdout, /clino run <command> \[args\.\.\.\]/);
+      assert.match(stdout, /clino inspect latest/);
+      assert.match(stdout, /clino summarize \[--dry-run\]/);
+      assert.match(stdout, /clino find <query>/);
+      assert.match(stdout, /clino inject <query>/);
+      assert.match(stdout, /clino status/);
+      assert.match(stdout, /clino doctor/);
+      assert.match(stdout, /-v, --version\s+Show version/);
+      assert.match(stdout, /-h, --help\s+Show help/);
+      assert.match(stdout, /CLINO_HOME can override storage location/);
+    }
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+});
+
+test('unknown command exits with a useful error', () => {
+  const work = tmp('clino-unknown-');
+  try {
+    const { code, stdout, stderr } = clino(['wat'], { cwd: work });
+    assert.equal(code, 1);
+    assert.equal(stdout, '');
+    assert.match(stderr, /Unknown command: wat/);
+    assert.match(stderr, /clino help/);
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// clino doctor
+// ---------------------------------------------------------------------------
+
+test('doctor: empty project reports setup without creating .clino', () => {
+  const work = tmp('clino-doctor-empty-');
+  try {
+    const { code, stdout, stderr } = clino(['doctor'], { cwd: work });
+    assert.equal(code ?? 0, 0);
+    assert.equal(stderr, '');
+    assert.match(stdout, /Clino doctor/);
+    assert.match(stdout, new RegExp(`Version: clino ${escapeRegExp(PACKAGE.version)}`));
+    assert.match(stdout, /Node: v\d+\.\d+\.\d+/);
+    assert.match(stdout, new RegExp(`CWD: ${escapeRegExp(work)}`));
+    assert.match(stdout, new RegExp(`- Home: ${escapeRegExp(join(work, '.clino'))}`));
+    assert.match(stdout, /- Mode: cwd fallback/);
+    assert.match(stdout, /- Git repo: no/);
+    assert.match(stdout, /- Git ignored: n\/a \(not a git repo\)/);
+    assert.match(stdout, /- Sessions dir: missing/);
+    assert.match(stdout, /- Memory dir: missing/);
+    assert.match(stdout, /- node-pty: ok/);
+    assert.match(stdout, /- CLI bin: ok \(\.\/dist\/index\.js\)/);
+    assert.match(stdout, /- Build output: exists \(dist\/index\.js\)/);
+    assert.match(stdout, /Warnings:\n- none/);
+    assert.ok(!existsSync(join(work, '.clino')), 'doctor does not create .clino');
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+});
+
+test('doctor: reports CLINO_HOME override without creating storage dirs', () => {
+  const home = tmp('clino-doctor-home-');
+  const work = tmp('clino-doctor-work-');
+  markGitRoot(work);
+  try {
+    const { code, stdout } = clino(['doctor'], { cwd: work, clinoHome: home });
+    assert.equal(code ?? 0, 0);
+    assert.match(stdout, new RegExp(`- Home: ${escapeRegExp(home)}`));
+    assert.match(stdout, /- Mode: CLINO_HOME override/);
+    assert.match(stdout, /- Git repo: yes/);
+    assert.match(stdout, /- Git ignored: n\/a \(custom CLINO_HOME\)/);
+    assert.match(stdout, /- Sessions dir: missing/);
+    assert.match(stdout, /- Memory dir: missing/);
+    assert.ok(!existsSync(join(home, 'sessions')), 'doctor does not create sessions dir');
+    assert.ok(!existsSync(join(home, 'memory')), 'doctor does not create memory dir');
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+    rmSync(work, { recursive: true, force: true });
+  }
+});
+
+test('doctor: reports project-local Git storage and ignore status', () => {
+  const root = tmp('clino-doctor-git-');
+  const nested = join(root, 'packages', 'app');
+  markGitRoot(root);
+  writeFileSync(join(root, '.gitignore'), 'node_modules/\n.clino/\n');
+  mkdirSync(nested, { recursive: true });
+  try {
+    const { code, stdout } = clino(['doctor'], { cwd: nested });
+    assert.equal(code ?? 0, 0);
+    assert.match(stdout, new RegExp(`- Home: ${escapeRegExp(join(root, '.clino'))}`));
+    assert.match(stdout, /- Mode: project-local Git root/);
+    assert.match(stdout, /- Git repo: yes/);
+    assert.match(stdout, /- Git ignored: yes/);
+    assert.match(stdout, /Warnings:\n- none/);
+    assert.ok(!existsSync(join(root, '.clino')), 'doctor does not create .clino');
+    assert.ok(!existsSync(join(nested, '.clino')), 'doctor does not create nested .clino');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test('CLINO_HOME is used exactly, ignoring git root and cwd', () => {
   const home = tmp('clino-home-');
@@ -120,6 +312,193 @@ test('summarize writes memory into the resolved home', () => {
     const decisions = join(work, '.clino', 'memory', 'decisions.md');
     assert.ok(existsSync(decisions), 'decisions memory written under resolved home');
     assert.match(readFileSync(decisions, 'utf8'), /Use JWT auth because it is stateless\./);
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// clino inspect / summarize debug mode
+// ---------------------------------------------------------------------------
+
+test('inspect latest: no sessions exits nonzero without creating .clino', () => {
+  const work = tmp('clino-inspect-empty-');
+  try {
+    const { code, stdout, stderr } = clino(['inspect', 'latest'], { cwd: work });
+    assert.equal(code, 1);
+    assert.equal(stdout, '');
+    assert.match(stderr, /No session transcripts found/);
+    assert.ok(!existsSync(join(work, '.clino')), 'inspect latest does not create .clino');
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+});
+
+test('inspect latest: reports the newest session metadata, preview, and counts', () => {
+  const work = tmp('clino-inspect-latest-');
+  try {
+    const sessionFile = writeSessionFixture(
+      work,
+      'manual.md',
+      "We decided to use JWT auth because it's stateless.\nremaining: add unit tests for auth module",
+    );
+    const { code, stdout, stderr } = clino(['inspect', 'latest'], { cwd: work });
+    assert.equal(code ?? 0, 0);
+    assert.equal(stderr, '');
+    assert.match(stdout, /Clino inspect/);
+    assert.match(stdout, new RegExp(`File: ${escapeRegExp(sessionFile)}`));
+    assert.match(stdout, /Size: \d+ bytes/);
+    assert.match(stdout, /Started: 2026-05-25T10:00:00\.000Z/);
+    assert.match(stdout, /Ended: 2026-05-25T10:00:02\.000Z/);
+    assert.match(stdout, /Exit code: 0/);
+    assert.match(stdout, /Cleaned preview:/);
+    assert.match(stdout, /We decided to use JWT auth/);
+    assert.match(stdout, /Extraction counts:/);
+    assert.match(stdout, /- decisions: 1/);
+    assert.match(stdout, /- todos: 1/);
+    assert.match(stdout, /- summary: 1/);
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+});
+
+test('inspect explicit session supports absolute and relative paths', () => {
+  const work = tmp('clino-inspect-file-');
+  try {
+    const sessionFile = writeSessionFixture(work, 'explicit.md', 'We decided to use local markdown memory.');
+
+    const absolute = clino(['inspect', sessionFile], { cwd: work });
+    assert.equal(absolute.code ?? 0, 0);
+    assert.match(absolute.stdout, new RegExp(`File: ${escapeRegExp(sessionFile)}`));
+    assert.match(absolute.stdout, /- decisions: 1/);
+
+    const relativePath = join('.clino', 'sessions', 'explicit.md');
+    const relativeResult = clino(['inspect', relativePath], { cwd: work });
+    assert.equal(relativeResult.code ?? 0, 0);
+    assert.match(relativeResult.stdout, new RegExp(`File: ${escapeRegExp(sessionFile)}`));
+    assert.match(relativeResult.stdout, /We decided to use local markdown memory/);
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+});
+
+test('inspect missing file exits nonzero with a clear error', () => {
+  const work = tmp('clino-inspect-missing-');
+  try {
+    const { code, stdout, stderr } = clino(['inspect', 'missing.md'], { cwd: work });
+    assert.equal(code, 1);
+    assert.equal(stdout, '');
+    assert.match(stderr, /Session file not found:/);
+    assert.match(stderr, /missing\.md/);
+    assert.ok(!existsSync(join(work, '.clino')), 'inspect missing file does not create .clino');
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+});
+
+test('summarize --dry-run prints extracted categories without writing memory', () => {
+  const work = tmp('clino-dry-run-');
+  try {
+    const sessionFile = writeSessionFixture(
+      work,
+      'dry.md',
+      [
+        "We decided to use JWT auth because it's stateless.",
+        'remaining: add unit tests for auth module',
+        'GUARDRAILS.md has an unclosed code fence.',
+        'error: module type not specified',
+        'Fixed Redis blacklist bug.',
+      ].join('\n'),
+    );
+    const { code, stdout, stderr } = clino(['summarize', '--dry-run', sessionFile], { cwd: work });
+    assert.equal(code ?? 0, 0);
+    assert.equal(stderr, '');
+    assert.match(stdout, /Clino summarize dry run/);
+    assert.match(stdout, /No memory files were written\./);
+    assert.match(stdout, /Candidate memories:/);
+    assert.match(stdout, /decisions \(1\)\n- Use JWT auth because it is stateless\./);
+    assert.match(stdout, /todos \(1\)\n- Add unit tests for auth module\./);
+    assert.match(stdout, /bugs \(1\)\n- GUARDRAILS\.md has an unclosed code fence\./);
+    assert.match(stdout, /errors \(1\)\n- Module type not specified\./);
+    assert.match(stdout, /resolved \(1\)\n- Fixed Redis blacklist bug\./);
+    assert.match(stdout, /summary \(1\)\nThis session captured/);
+    assert.ok(!existsSync(join(work, '.clino', 'memory')), 'dry-run does not create memory dir');
+    assert.ok(!existsSync(join(work, '.clino', 'processed.sessions')), 'dry-run does not mark processed sessions');
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+});
+
+test('summarize --dry-run leaves existing memory unchanged', () => {
+  const work = tmp('clino-dry-existing-');
+  try {
+    const memDir = join(work, '.clino', 'memory');
+    mkdirSync(memDir, { recursive: true });
+    const decisions = join(memDir, 'decisions.md');
+    const before = '---\ntype: decisions\n---\n\n- Keep existing memory untouched.\n';
+    writeFileSync(decisions, before);
+
+    const sessionFile = writeSessionFixture(
+      work,
+      'new.md',
+      'We decided to use dry-run previews for extraction debugging.',
+    );
+    const { code, stdout, stderr } = clino(['summarize', '--dry-run', sessionFile], { cwd: work });
+    assert.equal(code ?? 0, 0);
+    assert.equal(stderr, '');
+    assert.match(stdout, /Final stored memories if written:/);
+    assert.match(stdout, /Keep existing memory untouched\./);
+    assert.match(stdout, /Use dry-run previews for extraction debugging\./);
+    assert.equal(readFileSync(decisions, 'utf8'), before);
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+});
+
+test('summarize --show-cleaned strips ANSI and control noise', () => {
+  const work = tmp('clino-show-cleaned-');
+  try {
+    const sessionFile = writeSessionFixture(
+      work,
+      'cleaned.md',
+      [
+        '\x1b[39;49m\x1b[K Tip: New Use /fast to enable our fastest inference.\x1b[0m',
+        '10;rgb:ffff/ffff/ffff11;rgb:3c95/3c95/3c95',
+        "We decided to use JWT auth because it's stateless.",
+      ].join('\n'),
+    );
+    const { code, stdout, stderr } = clino(
+      ['summarize', '--dry-run', '--show-cleaned', sessionFile],
+      { cwd: work },
+    );
+    assert.equal(code ?? 0, 0);
+    assert.equal(stderr, '');
+    assert.match(stdout, /Cleaned transcript:/);
+    assert.match(stdout, /We decided to use JWT auth/);
+    assert.doesNotMatch(stdout, /\x1b/);
+    assert.doesNotMatch(stdout, /rgb:/i);
+    assert.doesNotMatch(stdout, /Tip: New Use/i);
+    assert.ok(!existsSync(join(work, '.clino', 'memory')), 'show-cleaned dry-run does not write memory');
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+});
+
+test('show-cleaned honors --max-chars', () => {
+  const work = tmp('clino-max-cleaned-');
+  try {
+    const sessionFile = writeSessionFixture(
+      work,
+      'long.md',
+      `We decided to use JWT auth because it's stateless. ${'x'.repeat(200)}`,
+    );
+    const { code, stdout } = clino(
+      ['inspect', sessionFile, '--show-cleaned', '--max-chars', '25'],
+      { cwd: work },
+    );
+    assert.equal(code ?? 0, 0);
+    assert.match(stdout, /Cleaned transcript:/);
+    assert.match(stdout, /\[truncated to 25 of \d+ chars\]/);
   } finally {
     rmSync(work, { recursive: true, force: true });
   }
@@ -219,6 +598,159 @@ test('status: detects whether .clino is git-ignored', () => {
   } finally {
     rmSync(ignoredRepo, { recursive: true, force: true });
     rmSync(trackedRepo, { recursive: true, force: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// clino memory
+// ---------------------------------------------------------------------------
+
+test('memory list: empty project reports no memory without creating .clino', () => {
+  const work = tmp('clino-memory-empty-');
+  try {
+    const { code, stdout, stderr } = clino(['memory', 'list'], { cwd: work });
+    assert.equal(code ?? 0, 0);
+    assert.equal(stderr, '');
+    assert.match(stdout, /No memory found\./);
+    assert.ok(!existsSync(join(work, '.clino')), 'memory list does not create .clino');
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+});
+
+test('memory list: shows display IDs, types, text, summaries, and resolved labels', () => {
+  const work = tmp('clino-memory-list-');
+  try {
+    writeMemoryFixture(work);
+    const { code, stdout, stderr } = clino(['memory', 'list'], { cwd: work });
+    assert.equal(code ?? 0, 0);
+    assert.equal(stderr, '');
+    assert.match(stdout, /^Memory/m);
+    assert.match(stdout, /decision-1\s+decision\s+Use project-local \.clino storage\./);
+    assert.match(stdout, /todo-1\s+todo\s+Add clino status command\./);
+    assert.match(stdout, /bug-1\s+bug\s+GUARDRAILS\.md has an unclosed code fence\. \[resolved\]/);
+    assert.match(stdout, /error-1\s+error\s+Module type not specified\./);
+    assert.match(stdout, /resolved-1\s+resolved\s+Fixed GUARDRAILS\.md unclosed code fence\./);
+    assert.match(stdout, /summary-1\s+summary\s+This session captured project-local storage work\./);
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+});
+
+test('memory list: filters by type', () => {
+  const work = tmp('clino-memory-type-');
+  try {
+    writeMemoryFixture(work);
+    const { code, stdout } = clino(['memory', 'list', '--type', 'bug'], { cwd: work });
+    assert.equal(code ?? 0, 0);
+    assert.match(stdout, /bug-1\s+bug\s+GUARDRAILS\.md has an unclosed code fence/);
+    assert.doesNotMatch(stdout, /decision-1/);
+    assert.doesNotMatch(stdout, /todo-1/);
+    assert.doesNotMatch(stdout, /resolved-1/);
+    assert.doesNotMatch(stdout, /summary-1/);
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+});
+
+test('memory show: prints full item details for a valid ID', () => {
+  const work = tmp('clino-memory-show-');
+  try {
+    const memDir = writeMemoryFixture(work);
+    const { code, stdout, stderr } = clino(['memory', 'show', 'decision-1'], { cwd: work });
+    assert.equal(code ?? 0, 0);
+    assert.equal(stderr, '');
+    assert.match(stdout, /Memory item/);
+    assert.match(stdout, /ID: decision-1/);
+    assert.match(stdout, /Type: decision/);
+    assert.match(stdout, /Date: 2026-05-25/);
+    assert.match(stdout, /Source: sessions\/test\.md/);
+    assert.match(stdout, new RegExp(`File: ${escapeRegExp(join(memDir, 'decisions.md'))}`));
+    assert.match(stdout, /Text:\nUse project-local \.clino storage\./);
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+});
+
+test('memory show: invalid ID exits nonzero without creating .clino', () => {
+  const work = tmp('clino-memory-show-missing-');
+  try {
+    const { code, stdout, stderr } = clino(['memory', 'show', 'bug-1'], { cwd: work });
+    assert.equal(code, 1);
+    assert.equal(stdout, '');
+    assert.match(stderr, /Memory item not found: bug-1/);
+    assert.ok(!existsSync(join(work, '.clino')), 'memory show does not create .clino');
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+});
+
+test('memory delete: removes a valid ID from its memory file', () => {
+  const work = tmp('clino-memory-delete-');
+  try {
+    const memDir = writeMemoryFixture(work);
+    const { code, stdout, stderr } = clino(['memory', 'delete', 'todo-1'], { cwd: work });
+    assert.equal(code ?? 0, 0);
+    assert.equal(stderr, '');
+    assert.match(stdout, /Deleted todo-1 \(todo\): Add clino status command\./);
+    const todos = readFileSync(join(memDir, 'todos.md'), 'utf8');
+    assert.match(todos, /type: todos/);
+    assert.doesNotMatch(todos, /Add clino status command/);
+    const listed = clino(['memory', 'list'], { cwd: work });
+    assert.doesNotMatch(listed.stdout, /todo-1/);
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+});
+
+test('memory delete: invalid ID exits nonzero without modifying memory or creating storage', () => {
+  const work = tmp('clino-memory-delete-missing-');
+  try {
+    const { code, stdout, stderr } = clino(['memory', 'delete', 'todo-1'], { cwd: work });
+    assert.equal(code, 1);
+    assert.equal(stdout, '');
+    assert.match(stderr, /Memory item not found: todo-1/);
+    assert.ok(!existsSync(join(work, '.clino')), 'missing memory delete does not create .clino');
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+});
+
+test('memory delete --dry-run: previews deletion without modifying files', () => {
+  const work = tmp('clino-memory-dry-');
+  try {
+    const memDir = writeMemoryFixture(work);
+    const before = readFileSync(join(memDir, 'bugs.md'), 'utf8');
+    const { code, stdout, stderr } = clino(['memory', 'delete', 'bug-1', '--dry-run'], { cwd: work });
+    assert.equal(code ?? 0, 0);
+    assert.equal(stderr, '');
+    assert.match(stdout, /Would delete bug-1 \(bug\): GUARDRAILS\.md has an unclosed code fence\./);
+    assert.equal(readFileSync(join(memDir, 'bugs.md'), 'utf8'), before);
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+});
+
+test('memory delete: deleted items disappear from find and inject results', () => {
+  const work = tmp('clino-memory-delete-search-');
+  const memDir = join(work, '.clino', 'memory');
+  mkdirSync(memDir, { recursive: true });
+  writeFileSync(
+    join(memDir, 'decisions.md'),
+    '---\ntype: decisions\ndate: 2026-05-25\nsource: sessions/test.md\n---\n\n' +
+      '- Use JWT authentication because it is stateless.\n',
+  );
+  try {
+    assert.match(clino(['find', 'JWT'], { cwd: work }).stdout, /JWT authentication/);
+    assert.match(clino(['inject', 'JWT'], { cwd: work }).stdout, /JWT authentication/);
+
+    const deleted = clino(['memory', 'delete', 'decision-1'], { cwd: work });
+    assert.equal(deleted.code ?? 0, 0);
+
+    assert.doesNotMatch(clino(['find', 'JWT'], { cwd: work }).stdout, /JWT authentication/);
+    assert.doesNotMatch(clino(['inject', 'JWT'], { cwd: work }).stdout, /JWT authentication/);
+  } finally {
+    rmSync(work, { recursive: true, force: true });
   }
 });
 

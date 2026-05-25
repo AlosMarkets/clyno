@@ -1,298 +1,439 @@
-# Clino: Persistent Memory for AI Coding Agents
+## Where Clino actually is now
 
-## Vision
-Build a local-first, privacy-respecting system that provides persistent structured memory for terminal-based AI coding agents (Codex, Claude Code, Aider, Goose, etc.) to eliminate token waste from reloading entire session histories and enable instant context rehydration.
+Current reality:
 
-## Core Principles
-- **Local-first**: Nothing leaves the user's machine unless explicitly opted-in
-- **Agent-agnostic**: Works with any terminal agent via STDIN/STDOUT or file-based protocols
-- **Markdown-native**: Knowledge base stored as readable, version-controlled Markdown files
-- **Git-friendly**: Designed to commit cleanly alongside source code
-- **Selective context**: Only relevant memory chunks loaded into agent context window
-- **Intelligent compression**: Automatic summarization, deduplication, and extraction of signal from noise
+```txt
+Built:
+- TypeScript CLI
+- real node-pty `clino run`
+- project-local `.clino/`
+- private-by-default Git behavior
+- transcript capture
+- transcript cleaning
+- memory extraction
+- phrase repair
+- dedupe
+- resolved memory tracking
+- `find`
+- `inject`
+- `status`
+- docs/guardrails
+- 45 passing tests
+```
+
+So the new trajectory should be:
+
+```txt
+Turn the working prototype into a reliable daily-use CLI.
+```
+
+# New strategic direction
+
+The next version of the roadmap should be centered around **MVP readiness**, not intelligence.
+
+The product is now:
+
+> A local-first CLI memory layer for terminal AI coding agents.
+
+The next question is:
+
+> Can a developer install this, run Claude/Codex through it for a week, and trust the memory it produces?
+
+That means the next roadmap should focus on:
+
+1. CLI polish
+2. memory trust
+3. manual control
+4. real-session dogfooding
+5. installability
+6. documentation
+7. safety/privacy
+8. only then smarter search
+
+## The new roadmap should probably be this
+
+### Phase 1 — MVP hardening
+
+Goal: make Clino reliable enough for your own daily use.
+
+Build next:
+
+```txt
+clino --version
+clino help
+clino doctor
+clino clean
+clino memory list
+clino memory show
+clino memory delete
+```
+
+Why? Because right now Clino can create memories, but user control is still thin. A memory tool must let the user inspect and delete what it learned.
+
+I would prioritize:
+
+```txt
+1. clino memory list
+2. clino memory show <type>
+3. clino memory delete <id or query>
+4. clino doctor
+```
+
+Not embeddings. Not GUI.
+
+### Phase 2 — Trust and correction loop
+
+This is the real missing piece.
+
+Right now Clino can extract and resolve, but the user needs a way to correct it.
+
+Needed commands:
+
+```bash
+clino memory list
+clino memory edit
+clino memory delete
+clino resolve "GUARDRAILS code fence"
+clino ignore "bad extracted memory"
+```
+
+This matters more than semantic search because bad memory is worse than no memory.
+
+The product principle should be:
+
+> Clino never traps users with stale or wrong memory.
+
+### Phase 3 — Better real-session extraction
+
+You already hit ANSI/TUI noise. More will appear.
+
+Add:
+
+```txt
+- raw transcript stays unchanged
+- cleaned transcript preview
+- extraction debug mode
+- per-session extraction report
+```
+
+Useful commands:
+
+```bash
+clino inspect latest
+clino inspect <session>
+clino summarize --dry-run <session>
+clino summarize --show-cleaned <session>
+```
+
+This lets you debug extraction without guessing.
+
+### Phase 4 — Installation and packaging
+
+Before any desktop app:
+
+```txt
+- npm package polish
+- bin command
+- npm link docs
+- --version
+- install instructions
+- release checklist
+- GitHub Actions CI
+```
+
+A CLI people can install beats a half-built Electron app.
+
+### Phase 5 — Retrieval improvements
+
+Only after the above:
+
+```txt
+- better scoring
+- tag boost
+- phrase boost
+- recency boost
+- resolved suppression improvements
+- optional SQLite index
+```
+
+Still avoid embeddings until keyword/rules are maxed out.
+
+### Phase 6 — Optional intelligence
+
+Later:
+
+```txt
+- local embeddings
+- semantic search
+- component-level memory
+- architecture summaries
+- changelog generation
+```
+
+The old roadmap puts this too early. Your dogfood showed the bottleneck is not semantic search yet — it is memory quality and control.
+
+# The new `ROADMAP.md` structure
+
+I’d replace the stale roadmap with something like this:
+
+````md
+# Clino Roadmap
+
+## Current Status
+
+Clino is no longer pre-prototype.
+
+The current CLI can:
+
+- Run terminal agents through a real PTY.
+- Capture raw transcripts.
+- Store project-local `.clino/` memory.
+- Keep `.clino/` private by default in Git.
+- Clean terminal/TUI noise before extraction.
+- Extract decisions, TODOs, bugs, errors, summaries, and resolved items.
+- Repair low-quality memory fragments.
+- Deduplicate repeated memories.
+- Search memory with `clino find`.
+- Generate context with `clino inject`.
+- Show storage health with `clino status`.
+- Suppress resolved bugs during injection.
+
+The next goal is not to add a GUI or embeddings.
+
+The next goal is to make Clino reliable enough for daily use.
 
 ---
 
-## Implementation Roadmap
+## Product North Star
 
-### Phase 0: Exploration & Validation (Weeks 1-2)
-**Goal**: Validate core assumptions with minimal viable prototype.
+Never explain your project to an AI coding agent twice.
 
-**Activities**:
-- [ ] Survey terminal agents' integration points (environment variables, config files, hook scripts)
-- [ ] Build simple file-watcher that captures assistant turns from terminal output
-- [ ] Implement basic session summarization using heuristics (no LLM yet)
-- [ ] Create markdown export with folder-per-component structure
-- [ ] Test manual `/load-memory`-style injection with Codex/Claude Code
-
-**Official Docs References**:
-- Electron: https://www.electronjs.org/docs/latest/tutorial/quick-start
-- Tauri: https://tauri.app/v1/guides/
-- Node.js PTY: https://nodejs.org/api/pty.html
-- Chokidar (file watcher): https://github.com/paulmillr/chokidar
-- Terminus (PTY library): https://github.com/xtermjs/tty.js
-
-**Deliverable**: Proof-of-concept that can capture a Codex session, summarize it to markdown, and be manually reloaded.
+Clino should preserve useful project context from terminal AI sessions and make it easy to reuse later without bloating the agent context window.
 
 ---
 
-### Phase 1: Core Engine (Weeks 3-6)
-**Goal**: Build the foundational memory system with automated capture and basic retrieval.
+## Current MVP Loop
 
-**Components**:
-1. **Terminal Observer** (PTY-based)
-   - Spawns agent in PTY, captures bidirectional traffic
-   - Filters noise (spinners, progress bars, token stats)
-   - Extracts semantic turns: assistant replies, user prompts, code blocks, errors
-   - Official docs: Node.js PTY, child_process.spawn with {stdio: ['pipe', 'pipe', 'pipe']}
-
-2. **Signal Extractor & Compressor**
-   - Uses rule-based + lightweight ML to identify:
-     - Architectural decisions (keywords: "decide", "choose", "we'll use")
-     - Bug fixes (keywords: "fixed", "bug", "issue", stack traces)
-     - TODOs & plans (keywords: "todo", "next", "plan")
-     - Environment setup (commands, installs, config changes)
-     - Failed attempts (keywords: "failed", "doesn't work", "error")
-   - Official docs: 
-     - Sentence Transformers (for lightweight semantic scoring): https://sbert.io/docs/
-     - Regex cookbook: https://github.com/tringuyen98/regex-cookbook
-
-3. **Memory Store**
-   - Hierarchical markdown filesystem: `/project-memory/{component}/{aspect}.md`
-   - Frontmatter for metadata (timestamp, tags, component, session-id)
-   - Official docs:
-     - Gray-matter (frontmatter parser): https://github.com/jonschlinkert/gray-matter
-     - Markdown-it (markdown parsing/rendering): https://github.com/markdown-it/markdown-it
-     - SQLite FTS5 for metadata indexing: https://www.sqlite.org/fts5.html
-
-4. **Retrieval Interface**
-   - Simple CLI: `clino retrieve --component auth-system --query "jwt"`
-   - Returns top-K relevant markdown chunks based on:
-     - Exact tag match
-     - TF-IDF scoring (later upgrade to embeddings)
-     - Recency boost
-   - Official docs:
-     - Natural (TF-IDF in JS): https://naturalnode.github.io/natural/
-     - Or use Python's sklearn for offline index building: https://scikit-learn.org/stable/modules/feature_extraction.html#text-feature-extraction
-
-5. **Rehydration API**
-   - Generates concise summary prompt for agent consumption:
-     ```
-     # Project Memory Context (auth-system)
-     
-     ## Decisions
-     - JWT chosen for stateless auth (2024-05-20)
-     - Redis blacklist for token revocation
-     
-     ## Active TODOs
-     - Implement refresh token rotation
-     
-     ## Recent Bug Fixes
-     - Fixed cookie parsing edge case (see bugs.md#L15)
-     ```
-   - Agent injects this at session start via environment variable or temporary file.
-
-**Official Docs for Build System**:
-- Electron builder: https://www.electronjs.org/docs/tutorial/application-distribution
-- Tauri bundler: https://tauri.app/v1/guides/bundling/
-- Cross-platform packaging: https://github.com/electron-userland/electron-builder
-
-**Deliverable**: Working desktop app (Electron/Tauri) that runs agent in PTY, builds searchable markdown memory, and can inject context summaries.
+```txt
+clino run <agent>
+→ capture transcript
+→ clean transcript for extraction
+→ extract useful memory
+→ store local project memory
+→ search with clino find
+→ inject with clino inject
+→ resolve stale memories
+````
 
 ---
 
-### Phase 2: Intelligence Layer (Weeks 7-10)
-**Goal**: Add semantic search, automatic summarization, and smarter compression.
+## Phase 1: MVP Reliability
 
-**Enhancements**:
-1. **Local Embedding Engine**
-   - Use sentence-transformers or GGUF-format embeddings via llama.cpp
-   - Generate embeddings for each markdown chunk/store in SQLite with sqlite-vec extension
-   - Official docs:
-     - sqlite-vec: https://github.com/asg017/sqlite-vec
-     - llama.cpp embeddings: https://github.com/ggerganov/llama.cpp#embeddings
-     - SBERT multilingual models: https://www.sbert.net/docs/pretrained_models.html
+Goal: make the CLI predictable, inspectable, and safe.
 
-2. **Abstractive Summarization**
-   - Fine-tune small LLM (e.g., Phi-2, TinyLlama) on session-to-summary pairs
-   - Or use retrieval-augmented generation: extractive summary + LLM polishing
-   - Official docs:
-     - HuggingFace Transformers training: https://huggingface.co/docs/transformers/training
-     - Llama.cpp fine-tuning guide: https://github.com/ggerganov/llama.cpp/blob/master/examples/fine-tune/readme.md
-     - PEFT (Parameter-Efficient Fine-Tuning): https://huggingface.co/docs/peft
+### Priorities
 
-3. **Intent-Based Tagging**
-   - Auto-tag extracted signals with categories: `decision`, `bug`, `todo`, `env`, `failed-attempt`, `plan`
-   - Use zero-shot classification or lightweight fine-tuned model
-   - Official docs:
-     - HuggingFace zero-shot: https://huggingface.co/docs/transformers/main_classes/pipelines#zero-shot-classification
-     - Facebook BART-large-MNLI: https://huggingface.co/facebook/bart-large-mnli
+* Improve CLI help output.
+* Add `clino --version`.
+* Add `clino doctor`.
+* Add `clino memory list`.
+* Add `clino memory show`.
+* Add `clino memory delete`.
+* Add `clino inspect latest`.
+* Improve README install/use instructions.
+* Add release checklist.
+* Add CI.
 
-4. **Duplicate Detection & Merging**
-   - Similarity threshold to merge related decisions/bug reports
-   - Official docs: 
-     - Cosine similarity via sqlite-vec or FAISS: https://github.com/facebookresearch/faiss
+### Acceptance Criteria
 
-**Deliverable**: Memory system with semantic search (`clino find "redis auth bug"` returns relevant chunks) and auto-generated session summaries that rival human-written ones.
+* A fresh user can install Clino and run one agent session.
+* `clino status` explains where memory is stored.
+* `clino doctor` detects common setup problems.
+* Users can inspect and delete stored memories.
+* Tests pass on every commit.
 
 ---
 
-### Phase 3: Integration & Polish (Weeks 11-14)
-**Goal**: Deep integrations with popular agents and version control.
+## Phase 2: Memory Trust and Correction
 
-**Features**:
-1. **Agent-Specific Adapters**
-   - Codex CLI: inject via `--context-file` or environment
-   - Claude Code: hook into `/memory load` slash command (if supported) or STDIN prefix
-   - Aider: modify config to load memory before each round
-   - Goose: similar STDIN/STDOUT interception
-   - Official docs: 
-     - Codex CLI: https://openai.com/blog/codex-cli
-     - Claude Code: https://docs.anthropic.com/en/docs/claude-code
-     - Aider: https://aider.chat/docs.html
-     - Goose: https://block.github.io/goose/
+Goal: make memory safe to rely on.
 
-2. **Git Integration**
-   - Auto-commit memory changes with meaningful messages
-   - Blame-aware memory: show which commit introduced a decision
-   - Optional: generate architecture docs from memory for `ARCHITECTURE.md`
-   - Official docs:
-     - libgit2 (cross-platform git bindings): https://libgit2.github.com/libgit2/
-     - Isomorphic-git (pure JS): https://isomorphicgit.org/
+### Priorities
 
-3. **Team Memory Sharing (Opt-In)**
-   - Encrypted sync via GitHub/GitLab private repos or IPFS
-   - Conflict resolution for concurrent edits
-   - Official docs:
-     - Octokit (GitHub API): https://github.com/octokit/core.js
-     - GitLab SDK: https://github.com/gitlabhq/gitlabhq/blob/master/doc/api/README.md
+* Add stable memory IDs.
+* Show source session for each memory.
+* Mark open/resolved status clearly.
+* Add `clino resolve <query>`.
+* Add `clino memory delete <query-or-id>`.
+* Add `clino summarize --dry-run`.
+* Add extraction confidence labels if useful.
+* Improve stale-memory suppression.
 
-4. **Configuration & Extensibility**
-   - TOML/YAML config for components, tags, summarization models
-   - Plugin system for custom extractors (e.g., domain-specific language detection)
-   - Official docs:
-     - TOML spec: https://toml.io/en/v1.0.0
-     - Pluggy (plugin framework): https://pluggy.readthedocs.io/
+### Acceptance Criteria
 
-**Deliverable**: Polished, installable desktop app with one-click setup for major coding agents, optional team sync, and comprehensive documentation.
+* Users can correct bad memory.
+* Resolved bugs do not appear as open bugs in injected context.
+* Search may show historical memory, but inject prioritizes current state.
+* Every injected item can be traced back to a session.
 
 ---
 
-### Phase 4: Ecosystem & Growth (Post-Launch)
-**Ideas for Future**:
-- **Memory Marketplace**: Share curated memory templates for common stacks (React, Django, etc.)
-- **Architecture Drift Detection**: Compare current codebase against architectural decisions in memory
-- **Auto-generated Changelogs**: From memory TODO/bug sections
-- **Voice-to-Memory**: Dictate decisions via voice memos
-- **Integration with Issue Trackers**: Auto-create GitHub issues from TODOs in memory
-- **Cross-Project Memory**: Global snippets for common algorithms, patterns
+## Phase 3: Real Agent Dogfooding
+
+Goal: prove Clino works with real Codex/Claude sessions.
+
+### Test Matrix
+
+* `clino run claude`
+* `clino run codex`
+* `clino run aider`
+* `clino run bash`
+* Ctrl+C behavior
+* Resize behavior
+* Long session transcripts
+* Full-screen TUI output
+* Agent session with code edits
+* Agent session with documentation review
+* Agent session with bug fix and resolution
+
+### Acceptance Criteria
+
+* Clino captures sessions without breaking terminal behavior.
+* Extracted memory is useful after real sessions.
+* No ANSI/TUI noise appears in memory.
+* `clino inject` gives compact, relevant context.
+* Dogfood sessions produce actionable memories.
 
 ---
 
-## Tech Stack Choices
+## Phase 4: Packaging and Distribution
 
-### Primary Options (Choose One)
+Goal: make Clino easy to install and update.
 
-#### Option A: Electron + Node.js/TypeScript
-- **Pros**: Mature ecosystem, easy file system/PTY access, vast npm packages, familiar to web devs
-- **Cons**: Higher memory footprint, larger binary size
-- **Key Packages**:
-  - `pty.js` for PTY handling
-  - `chokidar` for file watching
-  - `markdown-it` + `gray-matter` for markdown
-  - `sqlite3` + `sqlite-vec` for storage/vector search
-  - `@xenova/transformers` for running transformers in browser/node (or use huggingface.js)
-  - `natural` for TF-IDF
-  - `electron-builder` for packaging
+### Priorities
 
-#### Option B: Tauri + Rust
-- **Pros**: Tiny binaries, near-native performance, strong security model, modern tooling
-- **Cons**: Rust learning curve, fewer ready-made NLP libraries (may need FFI to Python)
-- **Key Crates**:
-  - `tauri` + `tauri-plugin-process` for PTY
-  - `notify` for file watching
-  - `pulldown-cmark` + `maud` for markdown
-  - `rusqlite` + `rusqlite` extensions for FTS5/vectors
-  - `tokenizers` (from HuggingFace) for embedding tokenization
-  - `tract` or `burn` for running lightweight ML models (or use Python via `pyo3`)
-  - `serde` for config
+* Finalize package metadata.
+* Add `bin` command verification.
+* Add npm publish readiness.
+* Add GitHub Actions CI.
+* Add changelog.
+* Add release tags.
+* Add install docs.
+* Add uninstall/cleanup docs.
 
-#### Option C: Python (PyQt/PySide or Simple GUI + CLI)
-- **Pros**: Best-in-class ML/NLP libraries (transformers, sentence-transformers, scikit-learn), rapid prototyping
-- **Cons**: Heavier runtime dependency, less smooth desktop app experience
-- **Key Packages**:
-  - `watchdog` for file watching
-  - `ptyprocess` for PTY
-  - `python-frontmatter`
-  - `sqlite3` + `sqlite-vec` via `pysqlite3-binary`
-  - `sentence-transformers` / `transformers` / `torch`
-  - `scikit-learn` for TF-IDF
-  - `PyInstaller` or `briefcase` for packaging
+### Acceptance Criteria
 
-### Recommended Stack for MVP
-**Electron + TypeScript** for fastest iteration and access to JS/TS NLP libraries that run in-node (like `@xenova/transformers` which uses ONNX Runtime). This avoids Python dependency complexity while still enabling embeddings and summarization via quantized models.
+* `npm install -g clino` or equivalent works.
+* `clino --version` works.
+* CI runs tests and build.
+* A user can follow README and succeed.
 
-If the team prefers Rust for performance and bundle size, **Tauri** is excellent but may require more effort to integrate cutting-edge ML models (could call out to Python via subprocess or use ONNX Runtime via `ort` crate).
+---
 
-### Storage Layer Details
-- **Primary**: SQLite database with:
-  - FTS5 table for keyword search on markdown content
-  - Optional `sqlite-vec` extension for vector similarity search
-  - Tables: `sessions`, `chunks` (with component, tags, timestamps, embedding blob)
-- **Backup**: Hierarchical markdown files in `~/clino-memory/{project-id}/` for human readability and git compatibility
-- **Official Docs**:
-  - SQLite FTS5: https://www.sqlite.org/fts5.html
-  - sqlite-vec: https://github.com/asg017/sqlite-vec
-  - SQLite JSON1 (for flexible metadata): https://www.sqlite.org/json1.html
+## Phase 5: Retrieval Quality
 
-### Summarization & Extraction Models
-- **MVP Phase**: Rule-based + TF-IDF (zero ML dependency)
-- **Phase 1**: Use small, quantized embeddings model (e.g., `BAAI/bge-small-en-v1.5` via `@xenova/transformers`) for semantic search
-- **Phase 2**: Use distilled summarization model (e.g., `philschmid/bart-large-cnn-samsum` or `Falconsai/text_summarization`) or train a tiny T5 on session-summary pairs
-- **Phase 3**: Optionally fine-tune a 1B-parameter LLM (like Phi-2 or TinyLlama) via LoRA for agent-specific summarization style
-- **Official Docs**:
-  - HuggingFace Model Hub: https://huggingface.co/models
-  - ONNX Runtime Web: https://github.com/microsoft/onnxruntime-web
-  - llama.cpp GGUF conversion: https://github.com/ggerganov/llama.cpp#converting-models-from-huggingface-format-to-gguf
+Goal: improve relevance without jumping to heavy ML too early.
 
-### PTY / Terminal Interaction
-- Need to spawn the target agent (Codex, etc.) in a pseudo-terminal and forward stdin/stdout/stderr
-- Must detect agent prompts vs. assistant output vs. user input
-- Official docs:
-  - Node.js `child_process.spawn` with `stdio: ['pipe', 'pipe', 'pipe', 'ipc']`
-  - `pty.js` library: https://github.com/indutny/pty.js
-  - For Rust: `tokio-process` or `async-process` with PTY features
-  - For Python: `ptyprocess`
+### Priorities
 
-### Noise Filtering Heuristics
-- Remove lines matching:
-  - Spinner patterns: `/\\|/-\\|/`
-  - Progress bars: `[=>\\s]*[0-9]+%`
-  - Token usage: `^tokens:|^prompt:|^completion:`
-  - Repeated empty lines
-  - Tool call logs (if agent prints them)
-- Official docs: Regex cheat sheet: https://developer.mozilla.org/en-US/docs/Web/JavaScript/Guide/Regular_Expressions/Cheat_Sheet
+* Improve query scoring.
+* Add exact phrase boost.
+* Add tag boost.
+* Add recency boost.
+* Add status boost: open > resolved for inject.
+* Add type boost: decisions/TODOs/bugs > summaries.
+* Add lightweight aliases.
+* Add optional `--type` filter.
 
-### Security & Privacy Considerations
-- All processing local by default
-- Optional telemetry opt-out
-- Memory files stored in user-chosen directory (default `~/clino-memory`)
-- Encryption option for memory at rest (using SQLCipher or file-level encryption)
-- Official docs:
-  - SQLCipher: https://www.zetetic.net/sqlcipher/
-  - Web Crypto API (for Electron): https://developer.mozilla.org/en-US/docs/Web/API/Web_Crypto_API
-  - Tauri security guidelines: https://tauri.app/v1/guides/security/
+### Example Commands
 
-## Next Steps for You
-1. **Choose implementation path** (Electron vs Tauri vs Python)
-2. **Define project structure** (monorepo? separate packages for core, CLI, GUI?)
-3. **Set up dev environment** with linting, testing, CI
-4. **Build vertical slice**: capture one turn → extract signal → save markdown → reload summary
+```bash
+clino find "auth" --type decision
+clino find "GUARDRAILS" --include-resolved
+clino inject "storage" --max-items 5
+```
 
-Would you like me to:
-- Draft a sample `package.json` or `Cargo.toml` with dependencies?
-- Create a basic folder structure for the chosen stack?
-- Write a prototype of the Terminal Observer in Node.js/Rust/Python?
-- Or continue brainstorming specific components (e.g., summarization strategy, git integration details)?
+### Acceptance Criteria
 
-Let me know how you'd like to proceed!
+* Search results are ranked sensibly.
+* Inject never dumps irrelevant memory.
+* Resolved memories are labeled clearly.
+* Users can narrow searches by type.
+
+---
+
+## Phase 6: Optional Local Intelligence
+
+Goal: add smarter retrieval only after the CLI is trustworthy.
+
+### Possible Features
+
+* SQLite index.
+* FTS search.
+* Local embeddings.
+* Semantic search.
+* Component-level summaries.
+* Architecture summaries.
+* Changelog generation.
+* Drift detection.
+
+### Non-Goals for Now
+
+* Desktop GUI.
+* Cloud sync.
+* Team sharing.
+* Marketplace.
+* Hosted agent execution.
+* Provider API proxying.
+* Autonomous background workers.
+
+---
+
+## Immediate Next Tasks
+
+1. Commit current resolved-memory milestone.
+2. Add `clino --version`.
+3. Improve `clino help`.
+4. Add `clino doctor`.
+5. Add `clino memory list`.
+6. Add `clino memory show`.
+7. Add `clino memory delete`.
+8. Run a full dogfood session using `clino run claude`.
+9. Inspect resulting memory.
+10. Fix only the issues revealed by dogfooding.
+
+
+## My recommendation
+
+Do **not** let the project drift into:
+
+```txt
+embeddings
+Electron
+team sync
+marketplace
+architecture drift
+```
+
+yet.
+
+The strongest next trajectory is:
+
+```txt
+Daily-use CLI → memory control → dogfood reliability → packaging
+```
+
+The next actual task I’d give the agent is:
+
+```txt
+Add `clino --version`, clean help output, and `clino doctor`.
+```
+
+Then after that:
+
+```txt
+Add `clino memory list/show/delete`.
+```
+
+That gives users control, which is the missing layer now.
+
