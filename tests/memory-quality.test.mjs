@@ -10,6 +10,7 @@ import {
   parseMemoryItems,
   stripMetadataPrefix,
   cleanTranscriptForExtraction,
+  compactForUiMatch,
   memoryResolvesItem,
 } from '../dist/memory.js';
 
@@ -354,4 +355,140 @@ test('classification: rejects process narration but keeps concrete project bugs'
   }
   assert.match(summary, /GUARDRAILS\.md/);
   assert.match(summary, /code fence|documentation/i);
+});
+
+// --------------------------------------------------------------------------
+// 9. Codex intro / login / auth blob rejection (block-level cleaning)
+// --------------------------------------------------------------------------
+
+// A real dogfood failure: the Codex intro/login screen arrives as ONE compacted
+// blob (no whitespace, ASCII/TUI noise, login text glued together). Line-oriented
+// cleaning let it through, and extraction minted fake decisions/todos/bugs.
+
+test('codex blob: compacted intro/login blob yields no cleaned text or memories', () => {
+  const blob =
+    "_._:=+===+,_ WelcometoCodex,OpenAI'scommand-linecodingagent" +
+    'SigninwithChatGPTtouseCodexaspartofyourpaidplanorconnectanAPIkeyforusage-basedbilling' +
+    '> 1. Sign in with ChatGPT Usage included with Plus, Pro, Business, and Enterprise plans' +
+    '2.SigninwithDeviceCode Sign in from another device with a one-time code' +
+    '3.ProvideyourownAPIkey Pay for what you use Press enter to continue';
+
+  const cleaned = cleanTranscriptForExtraction(blob);
+  assert.doesNotMatch(cleaned, /Welcome to Codex/i);
+  assert.doesNotMatch(cleaned, /Sign in with ChatGPT/i);
+  assert.doesNotMatch(cleaned, /Device Code/i);
+  assert.doesNotMatch(cleaned, /Provide your own API key/i);
+  assert.doesNotMatch(cleaned, /WelcometoCodex/i);
+
+  const signals = extractSignals(blob);
+  assert.deepEqual(signals.decisions, []);
+  assert.deepEqual(signals.todos, []);
+  assert.deepEqual(signals.bugs, []);
+  assert.deepEqual(signals.errors, []);
+  assert.deepEqual(signals.resolved, []);
+  assert.equal(synthesizeSummary(signals), '');
+});
+
+test('codex blob: embedded OAuth/auth URL is redacted and yields no memories', () => {
+  const blob =
+    'Welcome to Codex Finish signing in via your browser ' +
+    'https://auth.openai.com/oauth/authorize?response_type=code&client_id=app_TEST' +
+    '&redirect_uri=http%3A%2F%2Flocalhost%3A1455%2Fauth%2Fcallback' +
+    '&code_challenge=SECRET&state=SECRET';
+
+  const cleaned = cleanTranscriptForExtraction(blob);
+  assert.doesNotMatch(cleaned, /auth\.openai\.com/i);
+  assert.doesNotMatch(cleaned, /oauth/i);
+  assert.doesNotMatch(cleaned, /code_challenge/i);
+  assert.doesNotMatch(cleaned, /state=/i);
+  assert.doesNotMatch(cleaned, /client_id/i);
+  assert.doesNotMatch(cleaned, /redirect_uri/i);
+
+  const signals = extractSignals(blob);
+  for (const list of Object.values(signals)) assert.deepEqual(list, []);
+});
+
+test('codex blob: fully compacted no-space login text yields no memories', () => {
+  const blob =
+    'WelcometoCodexOpenAIcommandlinecodingagentSigninwithChatGPT' +
+    'SigninwithDeviceCodeProvideyourownAPIkeyPressentertocontinue';
+
+  const signals = extractSignals(blob);
+  for (const list of Object.values(signals)) assert.deepEqual(list, []);
+  assert.equal(synthesizeSummary(signals), '');
+});
+
+test('codex blob: auth markers never survive even when glued into kept prose', () => {
+  // The URL is glued directly onto a real sentence with no separating space, so
+  // the chunk is not pure login chrome — redaction must still scrub the markers.
+  const line =
+    'We decided to use project-local storage seehttps://auth.openai.com/oauth/authorize?client_id=x&state=y';
+  const cleaned = cleanTranscriptForExtraction(line);
+  assert.doesNotMatch(cleaned, /auth\.openai\.com/i);
+  assert.doesNotMatch(cleaned, /oauth/i);
+  assert.doesNotMatch(cleaned, /client_id/i);
+  assert.doesNotMatch(cleaned, /state=/i);
+});
+
+test('codex blob: a real decision adjacent to a login blob still survives', () => {
+  const transcript = [
+    "WelcometoCodex,OpenAI'scommand-linecodingagentSigninwithChatGPT",
+    'We decided to use project-local .clino storage.',
+  ].join('\n');
+  const signals = extractSignals(transcript);
+  assert.deepEqual(signals.decisions, ['Use project-local .clino storage.']);
+});
+
+test('quality: hard-rejects candidates whose compact form is Codex auth noise', () => {
+  assert.equal(isQualityMemory('Welcome to Codex, sign in with ChatGPT.', 'decisions'), false);
+  assert.equal(isQualityMemory('Provide your own API key for usage-based billing.', 'decisions'), false);
+  assert.equal(isQualityMemory('Finish signing in via your browser.', 'todos'), false);
+  // Regression guard: "stateless" must NOT be mistaken for the OAuth "state" param.
+  assert.equal(isQualityMemory('Use JWT auth because it is stateless.', 'decisions'), true);
+});
+
+test('codex blob: compacted slash-command MENU blob yields no cleaned text or memories', () => {
+  // The Codex command menu, glued into one compacted line (the line-oriented
+  // isTerminalUiLine check only catches it when it starts a line by itself).
+  const menu =
+    '─ Worked for 6m 51s › / /model choose what model and reasoning effort to use' +
+    '/fast1.5x speed, increased usage/ideinclude current selection, open files' +
+    '/permissionschoose what Codex is allowed to do/keymapremap TUI shortcuts' +
+    '/vimtoggle Vim mode for the composer/compact summarize conversation to prevent ' +
+    'hitting the context limit gpt-5.5 xhigh · ~/Desktop/clino';
+
+  const cleaned = cleanTranscriptForExtraction(menu);
+  assert.doesNotMatch(cleaned, /choose what model/i);
+  assert.doesNotMatch(cleaned, /remap TUI/i);
+
+  const signals = extractSignals(menu);
+  for (const list of Object.values(signals)) assert.deepEqual(list, []);
+});
+
+test('codex blob: compacted session-chrome / spinner blob yields no memories', () => {
+  const chrome =
+    'To continue this session, run codex resume 019e5cd9-6281-7bc0-800b-f7c93a637342' +
+    '•Booting MCP server: codex_apps(0s • esc to interrupt)' +
+    '•Waiting for background terminal(3m 48s • esc to interrupt)';
+
+  const cleaned = cleanTranscriptForExtraction(chrome);
+  assert.doesNotMatch(cleaned, /codex resume/i);
+  assert.doesNotMatch(cleaned, /Booting MCP server/i);
+  assert.doesNotMatch(cleaned, /esc to interrupt/i);
+
+  const signals = extractSignals(chrome);
+  for (const list of Object.values(signals)) assert.deepEqual(list, []);
+});
+
+test('compactForUiMatch: strips whitespace/punctuation, preserves letters/numbers', () => {
+  assert.equal(
+    compactForUiMatch("Welcome to Codex, OpenAI's command-line coding agent"),
+    'welcometocodexopenaiscommandlinecodingagent',
+  );
+  const compact = compactForUiMatch(
+    "WelcometoCodex,OpenAI'scommand-linecodingagentSigninwithChatGPT",
+  );
+  assert.ok(compact.includes('welcometocodex'));
+  assert.ok(compact.includes('signinwithchatgpt'));
+  assert.ok(compactForUiMatch('ProvideyourownAPIkey').includes('provideyourownapikey'));
 });

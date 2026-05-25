@@ -169,13 +169,172 @@ function unwrapSoftWrappedLines(lines: string[]): string[] {
   return unwrapped;
 }
 
+// ---------------------------------------------------------------------------
+// Codex intro / login / auth blob rejection
+//
+// The Codex intro/login screen is NOT clean line-based output. It arrives as one
+// giant compacted blob: ASCII/TUI art, missing whitespace, and login/auth text
+// glued together. Line-oriented cleaning misses it, so it must be matched on a
+// whitespace/punctuation-free "compact" form and dropped wholesale.
+// ---------------------------------------------------------------------------
+
+/**
+ * Normalize text for matching compacted UI/login blobs: lowercase, drop all
+ * whitespace and punctuation/separators, keep only letters and digits.
+ *
+ *   "Welcome to Codex, OpenAI's command-line coding agent"
+ *     -> "welcometocodexopenaiscommandlinecodingagent"
+ *   "ProvideyourownAPIkey" -> "provideyourownapikey"
+ */
+export function compactForUiMatch(text: string): string {
+  return text.toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+// Compact patterns that mark a Codex intro / login / auth / menu blob. If a
+// chunk's compact form contains any of these, the whole chunk is dropped.
+const CODEX_INTRO_COMPACT_PATTERNS = [
+  'welcometocodex',
+  'openaiscommandlinecodingagent',
+  'signinwithchatgpt',
+  'signinwithdevicecode',
+  'provideyourownapikey',
+  'usagebasedbilling',
+  'pressentertocontinue',
+  'finishsigninginviayourbrowser',
+  'ifthelinkdoesntopenautomatically',
+  'openthefollowinglinktoauthenticate',
+  'authopenai',
+  'oauthauthorize',
+  'codechallenge',
+  'redirecturi',
+  'idtoken',
+  'accesstoken',
+  'refreshtoken',
+  'codexclisimplifiedflow',
+];
+
+// Codex command-menu / session-chrome signatures. These are the same TUI strings
+// isTerminalUiLine already recognizes line-by-line (booting MCP server, esc to
+// interrupt, the /model menu, …). The root-cause bug is that they survive when
+// compacted into one blob, so they are matched here on the compact form too.
+const CODEX_MENU_COMPACT_PATTERNS = [
+  'reasoningefforttouse',
+  'remaptuishortcuts',
+  'togglevimmode',
+  'summarizeconversationtoprevent',
+  'bootingmcpserver',
+  'esctointerrupt',
+  'codexresume',
+  'selectmodelandeffort',
+  'accesslegacymodels',
+  'waitingforbackgroundterminal',
+];
+
+// Hard candidate-rejection patterns (defense in depth — a candidate whose compact
+// form contains any of these is never stored as a memory). "state" from the spec
+// is deliberately omitted: it is a substring of ordinary words ("stateless",
+// "statement", "estate") and would reject valid memories such as the canonical
+// "Use JWT auth because it is stateless." The OAuth `state=` parameter is handled
+// instead by auth-URL/marker redaction below.
+const CODEX_AUTH_REJECT_COMPACT_PATTERNS = [
+  'welcometocodex',
+  'signinwithchatgpt',
+  'signinwithdevicecode',
+  'provideyourownapikey',
+  'usagebasedbilling',
+  'pressentertocontinue',
+  'finishsigningin',
+  'authopenai',
+  'oauthauthorize',
+  'codechallenge',
+  'redirecturi',
+  'clientid',
+  'codexclisimplifiedflow',
+];
+
+// Substrings that mark a URL (or URL-like token) as OAuth/auth chrome.
+const AUTH_URL_MARKERS = [
+  'auth.openai.com',
+  'oauth',
+  'authorize',
+  'callback',
+  'code_challenge',
+  'access_token',
+  'refresh_token',
+  'id_token',
+  'client_id',
+  'redirect_uri',
+  'state=',
+];
+
+// OAuth-specific query tokens that are never legitimate project prose. Stripped
+// as a final safety pass so they cannot survive even when a URL is glued into a
+// larger blob without surrounding whitespace.
+const AUTH_RESIDUE_RE =
+  /(?:auth\.openai\.com|oauth|code_challenge|code_verifier|access_token|refresh_token|id_token|client_id|redirect_uri|response_type|grant_type)\S*/gi;
+const AUTH_STATE_PARAM_RE = /[?&]state=[^\s&]*/gi;
+
+/**
+ * Remove full URLs (and URL-like runs) carrying an OAuth/auth marker, even when
+ * embedded in a larger line/blob. The `https?://` scheme is distinctive enough to
+ * match without a word boundary, so a URL glued onto preceding text is still
+ * removed in full.
+ */
+function redactAuthUrls(text: string): string {
+  return text.replace(/https?:\/\/\S+/gi, (url) => {
+    const lower = url.toLowerCase();
+    return AUTH_URL_MARKERS.some((m) => lower.includes(m)) ? '' : url;
+  });
+}
+
+/** Strip any residual OAuth/auth query tokens left behind after URL removal. */
+function redactAuthMarkers(text: string): string {
+  return text.replace(AUTH_RESIDUE_RE, '').replace(AUTH_STATE_PARAM_RE, '');
+}
+
+/** Conservative symbol-noise heuristic (used only alongside a Codex/auth signal). */
+function isHighSymbolNoise(text: string): boolean {
+  const dense = text.replace(/\s/g, '');
+  if (dense.length < 24) return false;
+  const symbols = (dense.match(/[^a-z0-9]/gi) || []).length;
+  return symbols / dense.length > 0.45;
+}
+
+/**
+ * Whether a chunk is a Codex intro/login/auth/menu blob that must be dropped
+ * wholesale. Matches on the compact form so single compacted blobs are caught.
+ * Symbol-noise alone never drops a chunk — it must be tied to a Codex/auth signal.
+ */
+function isCodexIntroChunk(line: string): boolean {
+  const compact = compactForUiMatch(line);
+  if (!compact) return false;
+  if (CODEX_INTRO_COMPACT_PATTERNS.some((p) => compact.includes(p))) return true;
+  if (CODEX_MENU_COMPACT_PATTERNS.some((p) => compact.includes(p))) return true;
+  if (isHighSymbolNoise(line) && /(codex|signin|apikey|oauth)/.test(compact)) return true;
+  return false;
+}
+
+/**
+ * Hard rejection for memory candidates: true when a candidate's compact form is
+ * recognizable Codex intro/login/auth text. Used as defense in depth so that even
+ * if block-level cleaning misses a blob, no fake memory is ever stored.
+ */
+export function isCodexAuthNoise(text: string): boolean {
+  const compact = compactForUiMatch(text);
+  if (!compact) return false;
+  return CODEX_AUTH_REJECT_COMPACT_PATTERNS.some((p) => compact.includes(p));
+}
+
 export function cleanTranscriptForExtraction(raw: string): string {
-  const lines = stripTerminalControlSequences(raw)
+  // Redact auth URLs before splitting so an embedded/compacted URL is removed in
+  // full, then drop terminal-UI lines and whole Codex intro/login/auth blobs.
+  const lines = redactAuthUrls(stripTerminalControlSequences(raw))
     .split('\n')
     .map(normalizeTranscriptLine)
-    .filter((line) => !isTerminalUiLine(line));
+    .filter((line) => !isTerminalUiLine(line) && !isCodexIntroChunk(line));
 
-  return unwrapSoftWrappedLines(lines).join('\n');
+  // Final safety pass: scrub any residual OAuth/auth query tokens.
+  return redactAuthMarkers(unwrapSoftWrappedLines(lines).join('\n'));
 }
 
 // Header labels Clino writes into every session transcript (see finalizeSession
@@ -365,6 +524,7 @@ export function isQualityMemory(text: string, type: MemoryType): boolean {
   const core = text.trim().replace(/^[-*+•]\s+/, '').replace(/[.!?]+$/, '').trim();
   if (!core) return false;
   if (isTerminalUiLine(core) || isAgentProcessNarration(core)) return false;
+  if (isCodexAuthNoise(core)) return false;
   if (type === 'bugs' && !hasConcreteBugSignal(core.toLowerCase())) return false;
 
   // Forbidden starts (defense in depth — repair should already remove these).
@@ -627,6 +787,7 @@ export function extractSignals(content: string): ExtractedSignals {
 
   for (const sentence of sentences) {
     if (isAgentProcessNarration(sentence)) continue;
+    if (isCodexAuthNoise(sentence)) continue;
     const category = classifySentence(sentence);
     if (!category) continue;
     const repaired = repairMemoryText(sentence);
