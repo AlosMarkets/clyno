@@ -976,6 +976,72 @@ test('review uses prompt/spec and Clino-output filters', () => {
   }
 });
 
+test('review dogfood prompt and Codex chrome do not become candidates', () => {
+  const work = tmp('clino-review-dogfood-');
+  try {
+    writeSessionFixture(
+      work,
+      'dogfood.md',
+      [
+        'Review the current Clino MVP from README.md, ROADMAP.md, and GUARDRAILS.md. Do not edit files. Identify the top 3 remaining MVP risks and the smallest next fixes.',
+        'Based on the docs, the MVP is close on positioning but still has three material gaps: › Find and fix a bug in @filename gpt-5.4-mini medium · ~/Desktop/clino',
+        'Need to add clino status command.',
+      ].join('\n'),
+    );
+
+    const preview = clino(['review', 'latest'], { cwd: work });
+    assert.equal(preview.code ?? 0, 0);
+    assert.match(preview.stdout, /todo-1\s+todo\s+Add clino status command\./);
+    assert.doesNotMatch(preview.stdout, /Identify the top 3 remaining MVP risks/i);
+    assert.doesNotMatch(preview.stdout, /Based on the docs/i);
+    assert.doesNotMatch(preview.stdout, /Find and fix a bug in @filename/i);
+    assert.doesNotMatch(preview.stdout, /gpt-5\.4-mini/i);
+    assert.doesNotMatch(preview.stdout, /Focus areas:.*\bBased\b/i);
+
+    const acceptAll = clino(['review', 'latest', '--accept', 'all', '--no-summary'], { cwd: work });
+    assert.equal(acceptAll.code ?? 0, 0);
+    assert.match(acceptAll.stdout, /todo-1:/);
+    assert.doesNotMatch(acceptAll.stdout, /Identify the top 3/i);
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+});
+
+test('review --accept all skips [suspicious] candidates unless --include-suspicious', () => {
+  const work = tmp('clino-review-suspicious-');
+  try {
+    writeSessionFixture(
+      work,
+      'suspicious.md',
+      [
+        'Identify the top 3 remaining MVP risks and the smallest next fixes.',
+        'We decided to use JWT auth because it is stateless.',
+      ].join('\n'),
+    );
+
+    const preview = clino(['review', 'latest'], { cwd: work });
+    assert.equal(preview.code ?? 0, 0);
+    assert.match(preview.stdout, /decision-1\s+decision\s+Use JWT auth because it is stateless\./);
+    assert.doesNotMatch(preview.stdout, /todo-1.*Identify the top 3/i);
+    if (/summary-1.*\[suspicious\]/.test(preview.stdout)) {
+      assert.match(preview.stdout, /--include-suspicious/);
+      const acceptDefault = clino(['review', 'latest', '--accept', 'all'], { cwd: work });
+      assert.equal(acceptDefault.code ?? 0, 0);
+      assert.match(acceptDefault.stdout, /decision-1:/);
+      assert.doesNotMatch(acceptDefault.stdout, /summary-1:/);
+
+      const acceptSuspicious = clino(
+        ['review', 'latest', '--accept', 'all', '--include-suspicious'],
+        { cwd: work },
+      );
+      assert.equal(acceptSuspicious.code ?? 0, 0);
+      assert.match(acceptSuspicious.stdout, /summary-1:/);
+    }
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+});
+
 // ---------------------------------------------------------------------------
 // clino review tracking
 // ---------------------------------------------------------------------------

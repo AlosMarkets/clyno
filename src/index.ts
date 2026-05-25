@@ -25,6 +25,7 @@ import {
   stripFrontmatter,
   repairMemoryText,
   isQualityMemory,
+  isSuspiciousCandidate,
   memoryResolvesItem,
   type MemoryType,
 } from './memory.js';
@@ -159,8 +160,8 @@ Usage:
   clino inspect latest [--show-cleaned] [--max-chars <n>]
   clino inspect <session-file> [--show-cleaned] [--max-chars <n>]
   clino review pending
-  clino review latest [--accept all|<ids>] [--no-summary]
-  clino review <session-file> [--accept all|<ids>] [--no-summary]
+  clino review latest [--accept all|<ids>] [--no-summary] [--include-suspicious]
+  clino review <session-file> [--accept all|<ids>] [--no-summary] [--include-suspicious]
   clino summarize [--dry-run] [--show-cleaned] [--max-chars <n>] <session-file>
   clino memory list [--type <type>] [--include-resolved]
   clino memory show <id>
@@ -1426,6 +1427,7 @@ interface ParsedReviewArgs {
   targetArg: string;
   accept?: string;
   noSummary: boolean;
+  includeSuspicious: boolean;
 }
 
 interface ReviewCandidate {
@@ -1433,9 +1435,11 @@ interface ReviewCandidate {
   type: MemoryDisplayType;
   category: MemoryCategory;
   text: string;
+  suspicious: boolean;
 }
 
-const REVIEW_USAGE = 'Usage: clino review <latest|session-file> [--accept all|<ids>] [--no-summary]';
+const REVIEW_USAGE =
+  'Usage: clino review <latest|session-file> [--accept all|<ids>] [--no-summary] [--include-suspicious]';
 
 const REVIEW_BUCKETS: Array<{ category: MemoryType; displayType: MemoryDisplayType }> = [
   { category: 'decisions', displayType: 'decision' },
@@ -1449,6 +1453,7 @@ function parseReviewArgs(args: string[]): ParsedReviewArgs | null {
   const positionals: string[] = [];
   let accept: string | undefined;
   let noSummary = false;
+  let includeSuspicious = false;
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
@@ -1466,6 +1471,10 @@ function parseReviewArgs(args: string[]): ParsedReviewArgs | null {
       noSummary = true;
       continue;
     }
+    if (arg === '--include-suspicious') {
+      includeSuspicious = true;
+      continue;
+    }
     if (arg.startsWith('--')) {
       console.error(`Unknown review option: ${arg}`);
       console.error(REVIEW_USAGE);
@@ -1479,7 +1488,16 @@ function parseReviewArgs(args: string[]): ParsedReviewArgs | null {
     return null;
   }
 
-  return { targetArg: positionals[0], accept, noSummary };
+  return { targetArg: positionals[0], accept, noSummary, includeSuspicious };
+}
+
+function reviewCandidateSuspicious(
+  type: MemoryDisplayType,
+  category: MemoryCategory,
+  text: string,
+): boolean {
+  if (category === 'summaries') return isSuspiciousCandidate(text, 'summaries');
+  return isSuspiciousCandidate(text, category);
 }
 
 function buildReviewCandidates(report: ExtractionReport): ReviewCandidate[] {
@@ -1493,6 +1511,7 @@ function buildReviewCandidates(report: ExtractionReport): ReviewCandidate[] {
         type: bucket.displayType,
         category: bucket.category,
         text,
+        suspicious: reviewCandidateSuspicious(bucket.displayType, bucket.category, text),
       });
     }
   }
@@ -1503,6 +1522,7 @@ function buildReviewCandidates(report: ExtractionReport): ReviewCandidate[] {
       type: 'summary',
       category: 'summaries',
       text: report.summary,
+      suspicious: reviewCandidateSuspicious('summary', 'summaries', report.summary),
     });
   }
 
@@ -1519,10 +1539,10 @@ function formatReviewCandidates(candidates: ReviewCandidate[]): string[] {
   return [
     'Candidate memories:',
     '',
-    ...candidates.map(
-      (candidate) =>
-        `${rightPad(candidate.id, idWidth)}${rightPad(candidate.type, typeWidth)}${candidate.text}`,
-    ),
+    ...candidates.map((candidate) => {
+      const suffix = candidate.suspicious ? '  [suspicious]' : '';
+      return `${rightPad(candidate.id, idWidth)}${rightPad(candidate.type, typeWidth)}${candidate.text}${suffix}`;
+    }),
   ];
 }
 
@@ -1543,10 +1563,20 @@ function formatReviewPreview(
 
   if (candidates.length > 0) {
     const selectedExample = candidates.slice(0, 2).map((candidate) => candidate.id).join(',');
+    const suspiciousCount = candidates.filter((c) => c.suspicious).length;
     lines.push(
       '',
       'To write all candidates:',
       `  clino review ${targetArg} --accept all`,
+    );
+    if (suspiciousCount > 0) {
+      lines.push(
+        '',
+        `${suspiciousCount} candidate${suspiciousCount === 1 ? '' : 's'} marked [suspicious] — skipped by --accept all unless you pass --include-suspicious.`,
+        `  clino review ${targetArg} --accept all --include-suspicious`,
+      );
+    }
+    lines.push(
       '',
       'To write selected candidates:',
       `  clino review ${targetArg} --accept ${selectedExample}`,
@@ -1560,12 +1590,15 @@ function selectReviewCandidates(
   candidates: ReviewCandidate[],
   accept: string,
   noSummary: boolean,
+  includeSuspicious: boolean,
 ): { selected: ReviewCandidate[]; error?: string } {
   const candidateById = new Map(candidates.map((candidate) => [candidate.id, candidate]));
   let selected: ReviewCandidate[];
 
   if (accept.toLowerCase() === 'all') {
-    selected = candidates;
+    selected = includeSuspicious
+      ? candidates
+      : candidates.filter((candidate) => !candidate.suspicious);
   } else {
     const ids = accept
       .split(',')
@@ -1732,7 +1765,12 @@ function printReview(args: string[]): number {
     return 0;
   }
 
-  const selection = selectReviewCandidates(candidates, parsed.accept, parsed.noSummary);
+  const selection = selectReviewCandidates(
+    candidates,
+    parsed.accept,
+    parsed.noSummary,
+    parsed.includeSuspicious,
+  );
   if (selection.error) {
     console.error(selection.error);
     console.error('No files were changed.');

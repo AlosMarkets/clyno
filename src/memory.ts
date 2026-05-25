@@ -137,6 +137,8 @@ function isTerminalUiLine(line: string): boolean {
     /^ran\s+\S+/i,
     /^\/(?:model|fast|ide|permissions|keymap|vim|experimental|approve|memories|mention|mcp)\b/i,
     /^gpt-[\w.-]+\s+\w+\s*(?:·\s*~?\/?.*)?$/i,
+    /^find and fix a bug\b/i,
+    /@filename\b/i,
   ].some((re) => re.test(t));
 }
 
@@ -331,7 +333,7 @@ export function cleanTranscriptForExtraction(raw: string): string {
   // Drop diff/code-noise, Clino-output, and session/status lines BEFORE unwrapping
   // so a patch line (which often ends in ";" or ",") can never be soft-joined onto
   // the prose line below it, and so spec headings reach the block pass intact.
-  const lines = redactAuthUrls(stripTerminalControlSequences(raw))
+  const lines = redactAuthUrls(redactCodexTaskChrome(stripTerminalControlSequences(raw)))
     .split('\n')
     .map(normalizeTranscriptLine)
     .filter(
@@ -341,6 +343,8 @@ export function cleanTranscriptForExtraction(raw: string): string {
         !isDiffOrCodeNoise(line) &&
         !isClinoOutputNoise(line) &&
         !isPromptSpecDirective(line) &&
+        !isPromptRequestDirective(line) &&
+        !isCodexTaskChrome(line) &&
         !isSessionStatusNoise(line),
     );
 
@@ -354,6 +358,8 @@ export function cleanTranscriptForExtraction(raw: string): string {
       !isDiffOrCodeNoise(line) &&
       !isClinoOutputNoise(line) &&
       !isPromptSpecDirective(line) &&
+      !isPromptRequestDirective(line) &&
+      !isCodexTaskChrome(line) &&
       !isSessionStatusNoise(line),
   );
 
@@ -564,6 +570,13 @@ const CLINO_OUTPUT_PATTERNS: RegExp[] = [
 export function isClinoOutputNoise(text: string): boolean {
   const t = stripPromptListPrefix(text);
   if (!t) return false;
+  // Explicit bug reports naming clino behavior are memory, not pasted CLI output.
+  if (/^bug:\s+/i.test(t)) return false;
+  if (
+    /\b(writes?\s+memory\s+before|shows?\s+.+\s+(?:issue|as\s+open)|shows?\s+resolved\s+\S+\s+issue)\b/i.test(t)
+  ) {
+    return false;
+  }
   return CLINO_OUTPUT_PATTERNS.some((re) => re.test(t));
 }
 
@@ -640,6 +653,104 @@ export function isPromptSpecDirective(text: string): boolean {
   const t = stripPromptListPrefix(text);
   if (!t) return false;
   return PROMPT_SPEC_DIRECTIVE_PATTERNS.some((re) => re.test(t));
+}
+
+// ---------------------------------------------------------------------------
+// User prompt-request instructions (review/dogfood tasks, not project memory)
+// ---------------------------------------------------------------------------
+
+const PROMPT_REQUEST_PATTERNS: RegExp[] = [
+  /^review the current\b/i,
+  /^do not edit files?\b/i,
+  /\bdo not edit files?\b/i,
+  /^identify the top \d+\b/i,
+  /\bidentify the top \d+\b/i,
+  /\bidentify the (?:top )?\d* ?remaining\b/i,
+  /\bsmallest next fixes?\b/i,
+  /^suggest the smallest fixes?\b/i,
+  /^focus only on risks?\b/i,
+  /^give a (?:short )?assessment\b/i,
+  /^mention any important\b/i,
+  /\bfrom readme\.md\b.*\b(?:roadmap|guardrails)\.md\b/i,
+  /\b(?:readme|roadmap|guardrails)\.md\b.*\bdo not edit\b/i,
+];
+
+/** Whether text is a user prompt instruction (review task), not a durable project TODO. */
+export function isPromptRequestDirective(text: string): boolean {
+  const t = stripPromptListPrefix(text);
+  if (!t) return false;
+  return PROMPT_REQUEST_PATTERNS.some((re) => re.test(t));
+}
+
+// ---------------------------------------------------------------------------
+// Codex task-picker / model chrome (not project memory)
+// ---------------------------------------------------------------------------
+
+const CODEX_TASK_CHROME_PATTERNS: RegExp[] = [
+  /find and fix a bug in @filename/i,
+  /›\s*find and fix a bug\b/i,
+  /\bfind and fix a bug\b/i,
+  /@filename\b/i,
+  /\bgpt-5(?:\.\d+)?(?:-[\w]+)?\b/i,
+  /\bmedium\s*·\s*~?\//i,
+  /·\s*~\/desktop\/clino\b/i,
+];
+
+/** Strip Codex task-picker and model-path chrome from a single line. */
+function redactCodexTaskChromeLine(line: string): string {
+  return line
+    .replace(/›\s*find and fix a bug in @filename[^\n]*/gi, '')
+    .replace(/find and fix a bug in @filename[^\n]*/gi, '')
+    .replace(/\bgpt-5[\w.-]*(?:-mini)?\s+\w+\s*·\s*~?\/[^\n]*/gi, '')
+    .replace(/\s*·\s*~\/desktop\/clino\b/gi, '')
+    .replace(/[ \t]{2,}/g, ' ')
+    .trim();
+}
+
+/** Strip Codex task-picker chrome line-by-line so transcript newlines stay intact. */
+function redactCodexTaskChrome(text: string): string {
+  return text
+    .split('\n')
+    .map((line) => redactCodexTaskChromeLine(line))
+    .join('\n');
+}
+
+/** Whether text contains Codex UI task/model chrome rather than project content. */
+export function isCodexTaskChrome(text: string): boolean {
+  const t = stripPromptListPrefix(text);
+  if (!t) return false;
+  return CODEX_TASK_CHROME_PATTERNS.some((re) => re.test(t));
+}
+
+// ---------------------------------------------------------------------------
+// Review/analysis conclusions (not concrete bugs)
+// ---------------------------------------------------------------------------
+
+/** Review-summary wording without a concrete failure — not a bug memory. */
+export function isReviewAnalysisSummary(text: string): boolean {
+  const t = stripPromptListPrefix(text).toLowerCase();
+  if (!t) return false;
+  if (/^bug:\s+/.test(t)) return false;
+  if (
+    /\b(unclosed|truncated|exit code|npm test|fails? with|regression|not working)\b/.test(t) &&
+    /\b(?:\.md\b|clino|guardrails|readme|inject|command)\b/.test(t)
+  ) {
+    return false;
+  }
+
+  return [
+    /^based on the docs\b/,
+    /\bmvp is close\b/,
+    /\bstill has (?:three |3 )?material gaps?\b/,
+    /\bthree material gaps\b/,
+    /\bmain risks are\b/,
+    /\btop remaining risks\b/,
+    /\bnot a blocker\b/,
+    /\bdocs are mostly clear\b/,
+    /\bquality issue\b(?!.*\b(?:\.md|clino|fence|unclosed|fails?|error)\b)/,
+    /\bclose on positioning\b/,
+    /\bmaterial gaps?\b/,
+  ].some((re) => re.test(t));
 }
 
 /** A line that continues an open spec block: a bullet, a numbered item, or blank. */
@@ -802,6 +913,7 @@ const LEAD_INS: RegExp[] = [
 export function repairMemoryText(raw: string): string {
   if (!raw) return '';
   let t = cleanTranscriptForExtraction(raw).replace(/\r/g, '').replace(/\s+/g, ' ').trim();
+  t = redactCodexTaskChromeLine(t);
   if (!t || isTerminalUiLine(t)) return '';
   // Drop a transcript-metadata label ("**Arguments:**", "Command:", …) if the
   // fragment slipped through with one attached, then keep repairing the content.
@@ -882,7 +994,8 @@ export function isQualityMemory(text: string, type: MemoryType): boolean {
   if (!core) return false;
   if (isTerminalUiLine(core) || isAgentProcessNarration(core)) return false;
   if (isCodexAuthNoise(core) || isDiffOrCodeNoise(core)) return false;
-  if (isClinoOutputNoise(core) || isPromptSpecDirective(core) || isSessionStatusNoise(core)) return false;
+  if (isClinoOutputNoise(core) || isPromptSpecDirective(core) || isPromptRequestDirective(core)) return false;
+  if (isCodexTaskChrome(core) || isReviewAnalysisSummary(core) || isSessionStatusNoise(core)) return false;
   if (type === 'bugs' && !hasConcreteBugSignal(core.toLowerCase())) return false;
 
   // Forbidden starts (defense in depth — repair should already remove these).
@@ -1064,6 +1177,11 @@ function isAgentProcessNarration(sentence: string): boolean {
 }
 
 function hasConcreteBugSignal(t: string): boolean {
+  if (isReviewAnalysisSummary(t) || isCodexTaskChrome(t)) return false;
+  if (/\bfind and fix a bug\b/.test(t)) return false;
+  if (/^bug:\s+/.test(t)) return true;
+  if (/\bshows?\s+.*\b(?:as\s+open|resolved\s+\S+\s+issue)\b/.test(t)) return true;
+  if (/\bwrites?\s+memory\s+before\b/.test(t)) return true;
   if (/\bbugs?\b/.test(t) || /^(bugs?)\s*:/.test(t)) return true;
   if (
     /\b(regression|broken|breakage|crash(?:es|ed|ing)?|hang(?:s|ed|ing)?|failing|failure|fails?\b|throws?|leak|corrupt|invalid|unclosed|truncated|incomplete|not working)\b/.test(t)
@@ -1100,6 +1218,10 @@ export function classifySentence(sentence: string): MemoryType | null {
     return 'resolved';
   }
 
+  if (isPromptRequestDirective(plain) || isCodexTaskChrome(plain) || isReviewAnalysisSummary(plain)) {
+    return null;
+  }
+
   if (
     /\b(error|exception)\b\s*:/.test(t) ||
     /^error\b/.test(t) ||
@@ -1127,7 +1249,6 @@ export function classifySentence(sentence: string): MemoryType | null {
     /\b(todo|fixme)\b/.test(t) ||
     /^(todo|fixme|remaining)\s*:/.test(t) ||
     /\b(need|want|plan|ought)\s+to\b/.test(t) ||
-    /\bremaining\b/.test(t) ||
     /^(add|implement|update|refactor|remove|fix)\b/.test(t)
   ) {
     return 'todos';
@@ -1149,7 +1270,16 @@ export function extractSignals(content: string): ExtractedSignals {
   for (const sentence of sentences) {
     if (isAgentProcessNarration(sentence)) continue;
     if (isCodexAuthNoise(sentence) || isDiffOrCodeNoise(sentence)) continue;
-    if (isClinoOutputNoise(sentence) || isPromptSpecDirective(sentence) || isSessionStatusNoise(sentence)) continue;
+    if (
+      isClinoOutputNoise(sentence) ||
+      isPromptSpecDirective(sentence) ||
+      isPromptRequestDirective(sentence) ||
+      isCodexTaskChrome(sentence) ||
+      isReviewAnalysisSummary(sentence) ||
+      isSessionStatusNoise(sentence)
+    ) {
+      continue;
+    }
     const category = classifySentence(sentence);
     if (!category) continue;
     const repaired = repairMemoryText(sentence);
@@ -1163,6 +1293,28 @@ export function extractSignals(content: string): ExtractedSignals {
   buckets.errors = dedupeMemories(buckets.errors);
   buckets.resolved = dedupeMemories(buckets.resolved);
   return buckets;
+}
+
+// ---------------------------------------------------------------------------
+// Review-mode suspicious candidates (survived filters but look dubious)
+// ---------------------------------------------------------------------------
+
+/** Light heuristic for review UI: flag candidates that may be prompt echo or chrome. */
+export function isSuspiciousCandidate(text: string, type: MemoryType | 'summaries'): boolean {
+  const core = text.trim();
+  if (!core) return true;
+  if (isPromptRequestDirective(core) || isCodexTaskChrome(core) || isReviewAnalysisSummary(core)) {
+    return true;
+  }
+  if (/\b(identify the top|top 3|smallest (?:next )?fix|do not edit files?)\b/i.test(core)) {
+    return true;
+  }
+  if (type === 'bugs' && !hasConcreteBugSignal(core.toLowerCase())) return true;
+  if (type === 'summaries' && /^this session captured\b/i.test(core) && countMeaningfulWords(core) < 6) {
+    return true;
+  }
+  if (type !== 'errors' && countMeaningfulWords(core) < 3) return true;
+  return false;
 }
 
 // ---------------------------------------------------------------------------
@@ -1279,6 +1431,9 @@ const TOPIC_STOP = new Set([
   'agent', 'command', 'arguments', 'args', 'exit', 'started', 'ended',
   'decided', 'decide', 'chose', 'choose', 'agreed', 'opted', 'project', 'local',
   'want', 'plan', 'ought',
+  // Review/dogfood filler — prefer concrete files and product terms.
+  'based', 'docs', 'positioning', 'has', 'close', 'current', 'remaining', 'top',
+  'risks', 'smallest', 'fixes', 'material', 'gaps', 'identify', 'review', 'assessment',
   // TUI/menu words from Codex/Claude chrome.
   'tip', 'new', 'fast', 'select', 'model', 'effort', 'openai', 'codex',
   'directory', 'legacy', 'models',

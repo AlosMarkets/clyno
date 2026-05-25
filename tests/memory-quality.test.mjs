@@ -14,6 +14,10 @@ import {
   compactForUiMatch,
   isDiffOrCodeNoise,
   isClinoOutputNoise,
+  isPromptRequestDirective,
+  isCodexTaskChrome,
+  isReviewAnalysisSummary,
+  isSuspiciousCandidate,
   memoryResolvesItem,
 } from '../dist/memory.js';
 
@@ -885,4 +889,95 @@ test('real memory adjacent to a spec block still extracts', () => {
   assert.deepEqual(s.decisions, ['Use project-local .clino storage.']);
   assert.deepEqual(s.todos, ['Add clino status command.']);
   for (const list of [s.bugs, s.errors, s.resolved]) assert.deepEqual(list, []);
+});
+
+// --------------------------------------------------------------------------
+// 8. Review-mode dogfood: prompt instructions, analysis, Codex chrome
+// --------------------------------------------------------------------------
+test('extract: rejects pasted review prompt instructions', () => {
+  const prompt =
+    'Review the current Clino MVP from README.md, ROADMAP.md, and GUARDRAILS.md. Do not edit files. Identify the top 3 remaining MVP risks and the smallest next fixes.';
+  const s = extractSignals(prompt);
+  assert.deepEqual(s.todos, []);
+  assert.deepEqual(s.bugs, []);
+  assert.deepEqual(s.decisions, []);
+  assert.deepEqual(s.resolved, []);
+  assert.deepEqual(s.errors, []);
+});
+
+test('extract: review conclusion is not classified as a bug', () => {
+  const line = 'Based on the docs, the MVP is close on positioning but still has three material gaps.';
+  assert.equal(isReviewAnalysisSummary(line), true);
+  const s = extractSignals(line);
+  assert.deepEqual(s.bugs, []);
+});
+
+test('extract: concrete Bug: prefix and doc defects still extract as bugs', () => {
+  assert.deepEqual(
+    extractSignals('Bug: clino run --review writes memory before review.').bugs,
+    ['Clino run --review writes memory before review.'],
+  );
+  assert.deepEqual(
+    extractSignals('GUARDRAILS.md has an unclosed code fence.').bugs,
+    ['GUARDRAILS.md has an unclosed code fence.'],
+  );
+});
+
+test('extract: Codex task chrome is rejected and stripped', () => {
+  const contaminated =
+    'Based on the docs, the MVP is close on positioning but still has three material gaps: › Find and fix a bug in @filename gpt-5.4-mini medium · ~/Desktop/clino';
+  const s = extractSignals(contaminated);
+  assert.deepEqual(s.bugs, []);
+  for (const list of Object.values(s)) {
+    for (const item of list) {
+      assert.doesNotMatch(item, /gpt-5\.4-mini/i);
+      assert.doesNotMatch(item, /find and fix a bug/i);
+    }
+  }
+});
+
+test('prompt-request filter keeps real project TODOs', () => {
+  for (const line of [
+    'Add a manual memory review workflow.',
+    'Add clino status command.',
+    'Add memory delete dry-run test.',
+    'Fix inject showing resolved bugs as open.',
+  ]) {
+    assert.equal(isPromptRequestDirective(line), false, line);
+  }
+  const s = extractSignals(
+    [
+      'Add a manual memory review workflow.',
+      'Need to add clino status command.',
+      'TODO: add memory delete dry-run test.',
+      'Bug: inject shows resolved GUARDRAILS issue as open.',
+    ].join('\n'),
+  );
+  assert.ok(s.todos.length >= 2);
+  assert.ok(s.bugs.length >= 1);
+});
+
+test('suspicious candidate heuristic flags prompt-like survivors', () => {
+  assert.equal(
+    isSuspiciousCandidate('Identify the top 3 remaining MVP risks and the smallest next fixes.', 'todos'),
+    true,
+  );
+  assert.equal(isSuspiciousCandidate('Add clino status command.', 'todos'), false);
+  assert.equal(isSuspiciousCandidate('This session captured 1 decision.', 'summaries'), true);
+  assert.equal(
+    isSuspiciousCandidate('This session captured 1 decision. Focus areas: JWT, Auth.', 'summaries'),
+    false,
+  );
+});
+
+test('summary focus areas omit review filler terms', () => {
+  const signals = extractSignals(
+    'Based on the docs, the MVP is close on positioning but still has three material gaps in README.md and GUARDRAILS.md.',
+  );
+  const summary = synthesizeSummary(signals);
+  if (summary) {
+    for (const junk of ['Based', 'Has', 'Positioning']) {
+      assert.doesNotMatch(summary, new RegExp(`Focus areas:.*\\b${junk}\\b`));
+    }
+  }
 });
