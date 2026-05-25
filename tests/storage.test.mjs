@@ -150,6 +150,7 @@ test('help commands show clean help', () => {
       assert.match(stdout, /Clino .* local memory for terminal coding agents/);
       assert.match(stdout, /clino run \[--review\|--no-memory\] <command> \[args\.\.\.\]/);
       assert.match(stdout, /clino inspect latest/);
+      assert.match(stdout, /clino review pending/);
       assert.match(stdout, /clino review latest/);
       assert.match(stdout, /clino summarize \[--dry-run\]/);
       assert.match(stdout, /clino find <query>/);
@@ -975,6 +976,217 @@ test('review uses prompt/spec and Clino-output filters', () => {
   }
 });
 
+// ---------------------------------------------------------------------------
+// clino review tracking
+// ---------------------------------------------------------------------------
+
+test('run --review creates session but no reviewed marker', () => {
+  const home = tmp('clino-review-marker-run-');
+  const work = tmp('clino-review-marker-run-work-');
+  try {
+    const run = clino(
+      ['run', '--review', 'echo', 'We decided to keep review markers and need to show pending reviews'],
+      { cwd: work, clinoHome: home },
+    );
+    assert.equal(run.code ?? 0, 0);
+    const sessionsDir = join(home, 'sessions');
+    assert.equal(readdirSync(sessionsDir).length, 1);
+    assert.ok(!existsSync(join(home, 'reviews')), 'run --review does not create reviews dir');
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+    rmSync(work, { recursive: true, force: true });
+  }
+});
+
+test('review pending lists unreviewed sessions newest first', () => {
+  const home = tmp('clino-review-pending-list-');
+  const work = tmp('clino-review-pending-list-work-');
+  try {
+    writeHomeSessionFixture(
+      home,
+      '2026-05-25T15-55-00-100Z.md',
+      'We decided to use older pending ordering.',
+    );
+    writeHomeSessionFixture(
+      home,
+      '2026-05-25T16-10-43-353Z.md',
+      'We decided to keep review markers and need to add pending review listing',
+    );
+
+    const { code, stdout, stderr } = clino(['review', 'pending'], { cwd: work, clinoHome: home });
+    assert.equal(code ?? 0, 0);
+    assert.equal(stderr, '');
+    assert.match(stdout, /Pending review sessions/);
+    assert.match(stdout, /2026-05-25T16-10-43-353Z\.md\s+decisions:1 todos:1 bugs:0 errors:0 resolved:0/);
+    assert.match(stdout, /2026-05-25T15-55-00-100Z\.md\s+decisions:1 todos:0 bugs:0 errors:0 resolved:0/);
+    const newerPos = stdout.indexOf('2026-05-25T16-10-43-353Z.md');
+    const olderPos = stdout.indexOf('2026-05-25T15-55-00-100Z.md');
+    assert.ok(newerPos < olderPos, 'newest pending session is listed first');
+    assert.ok(!existsSync(join(home, 'reviews')), 'review pending does not create reviews dir');
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+    rmSync(work, { recursive: true, force: true });
+  }
+});
+
+test('review latest --accept all creates reviewed marker and clears pending', () => {
+  const home = tmp('clino-review-marker-accept-');
+  const work = tmp('clino-review-marker-accept-work-');
+  try {
+    clino(
+      ['run', '--review', 'echo', 'We decided to keep review markers and need to add review mode'],
+      { cwd: work, clinoHome: home },
+    );
+    const accepted = clino(['review', 'latest', '--accept', 'all'], { cwd: work, clinoHome: home });
+    assert.equal(accepted.code ?? 0, 0);
+
+    const reviewsDir = join(home, 'reviews');
+    const markers = readdirSync(reviewsDir).filter((file) => file.endsWith('.reviewed.json'));
+    assert.equal(markers.length, 1);
+    const marker = JSON.parse(readFileSync(join(reviewsDir, markers[0]), 'utf8'));
+    assert.match(marker.session, /\.md$/);
+    assert.ok(marker.reviewedAt);
+    assert.equal(marker.accepted.decisions, 1);
+    assert.equal(marker.accepted.todos, 1);
+    assert.equal(marker.accepted.summaries, 1);
+
+    const pending = clino(['review', 'pending'], { cwd: work, clinoHome: home });
+    assert.match(pending.stdout, /No pending review sessions\./);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+    rmSync(work, { recursive: true, force: true });
+  }
+});
+
+test('review selected accept creates marker only after successful write', () => {
+  const work = tmp('clino-review-marker-selected-');
+  try {
+    const sessionFile = writeSessionFixture(
+      work,
+      'selected-marker.md',
+      [
+        'We decided to use selected review markers.',
+        'remaining: add selected marker tests',
+      ].join('\n'),
+    );
+    const accepted = clino(['review', sessionFile, '--accept', 'decision-1,todo-1'], { cwd: work });
+    assert.equal(accepted.code ?? 0, 0);
+
+    const markerPath = join(work, '.clino', 'reviews', 'selected-marker.reviewed.json');
+    assert.ok(existsSync(markerPath));
+    const marker = JSON.parse(readFileSync(markerPath, 'utf8'));
+    assert.equal(marker.session, 'selected-marker.md');
+    assert.equal(marker.accepted.decisions, 1);
+    assert.equal(marker.accepted.todos, 1);
+    assert.equal(marker.accepted.summaries, 0);
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+});
+
+test('review invalid accept ID creates no marker', () => {
+  const work = tmp('clino-review-marker-invalid-');
+  try {
+    const sessionFile = writeSessionFixture(
+      work,
+      'invalid-marker.md',
+      'We decided to validate review marker guards before writing.',
+    );
+    const rejected = clino(['review', sessionFile, '--accept', 'decision-99'], { cwd: work });
+    assert.equal(rejected.code, 1);
+    assert.ok(!existsSync(join(work, '.clino', 'reviews')), 'invalid accept does not create reviews dir');
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+});
+
+test('review --accept all with zero candidates still creates reviewed marker', () => {
+  const work = tmp('clino-review-marker-zero-');
+  try {
+    const sessionFile = writeSessionFixture(work, 'codex-only.md', 'SigninwithChatGPT PressEntertocontinue');
+    const accepted = clino(['review', sessionFile, '--accept', 'all'], { cwd: work });
+    assert.equal(accepted.code ?? 0, 0);
+
+    const markerPath = join(work, '.clino', 'reviews', 'codex-only.reviewed.json');
+    assert.ok(existsSync(markerPath));
+    const marker = JSON.parse(readFileSync(markerPath, 'utf8'));
+    assert.equal(marker.session, 'codex-only.md');
+    assert.deepEqual(marker.accepted, {
+      decisions: 0,
+      todos: 0,
+      bugs: 0,
+      errors: 0,
+      resolved: 0,
+      summaries: 0,
+    });
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+});
+
+test('status shows pending and reviewed session counts', () => {
+  const home = tmp('clino-review-marker-status-');
+  const work = tmp('clino-review-marker-status-work-');
+  try {
+    clino(
+      ['run', '--review', 'echo', 'We decided to keep review markers and need to add review mode'],
+      { cwd: work, clinoHome: home },
+    );
+
+    const before = clino(['status'], { cwd: work, clinoHome: home });
+    assert.match(before.stdout, /- pending sessions: 1/);
+    assert.match(before.stdout, /- reviewed sessions: 0/);
+
+    clino(['review', 'latest', '--accept', 'all'], { cwd: work, clinoHome: home });
+
+    const after = clino(['status'], { cwd: work, clinoHome: home });
+    assert.match(after.stdout, /- pending sessions: 0/);
+    assert.match(after.stdout, /- reviewed sessions: 1/);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+    rmSync(work, { recursive: true, force: true });
+  }
+});
+
+test('status empty project shows zero pending and reviewed without creating reviews dir', () => {
+  const work = tmp('clino-review-marker-status-empty-');
+  try {
+    const { code, stdout } = clino(['status'], { cwd: work });
+    assert.equal(code ?? 0, 0);
+    assert.match(stdout, /- pending sessions: 0/);
+    assert.match(stdout, /- reviewed sessions: 0/);
+    assert.ok(!existsSync(join(work, '.clino', 'reviews')), 'status does not create reviews dir');
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+});
+
+test('review tracking respects CLINO_HOME', () => {
+  const home = tmp('clino-review-marker-home-');
+  const work = tmp('clino-review-marker-home-work-');
+  try {
+    writeHomeSessionFixture(home, 'home.md', 'We decided to keep CLINO_HOME review markers isolated.');
+    const pending = clino(['review', 'pending'], { cwd: work, clinoHome: home });
+    assert.match(pending.stdout, /home\.md/);
+    assert.ok(!existsSync(join(work, '.clino')), 'cwd storage is untouched when CLINO_HOME is set');
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+    rmSync(work, { recursive: true, force: true });
+  }
+});
+
+test('review pending in empty project does not create .clino', () => {
+  const work = tmp('clino-review-pending-empty-');
+  try {
+    const { code, stdout } = clino(['review', 'pending'], { cwd: work });
+    assert.equal(code ?? 0, 0);
+    assert.match(stdout, /No pending review sessions\./);
+    assert.ok(!existsSync(join(work, '.clino')), 'review pending does not create .clino');
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+});
+
 test('review selected resolved item writes resolved memory and suppresses matching open bug during inject', () => {
   const work = tmp('clino-review-resolved-');
   try {
@@ -1015,6 +1227,8 @@ test('status: empty project shows the resolved path and zero counts', () => {
     // Reports where memory *would* live without creating it.
     assert.match(stdout, new RegExp(`Home: ${join(work, '.clino')}`.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
     assert.match(stdout, /Sessions: 0/);
+    assert.match(stdout, /- pending sessions: 0/);
+    assert.match(stdout, /- reviewed sessions: 0/);
     assert.match(stdout, /Memory files: 0/);
     assert.match(stdout, /- decisions: 0/);
     assert.match(stdout, /- summaries: 0/);

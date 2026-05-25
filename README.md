@@ -279,6 +279,12 @@ Use `--accept all` to write every candidate or pass a comma-separated ID list to
 write only selected memories. Add `--no-summary` with `--accept all` to skip the
 synthesized summary.
 
+Review tracking:
+
+- `clino review pending` shows captured sessions that have not been accepted/reviewed.
+- Accepted sessions get a local marker under `.clino/reviews/`.
+- Raw sessions remain untouched.
+
 Manage stored memory:
 
 ```bash
