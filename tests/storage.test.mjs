@@ -657,14 +657,14 @@ test('show-cleaned honors --max-chars', () => {
 // clino review
 // ---------------------------------------------------------------------------
 
-test('review latest: no sessions exits nonzero without creating .clino', () => {
+test('review latest: no pending sessions exits zero without creating .clino', () => {
   const work = tmp('clino-review-empty-');
   try {
     const { code, stdout, stderr } = clino(['review', 'latest'], { cwd: work });
-    assert.equal(code, 1);
-    assert.equal(stdout, '');
-    assert.match(stderr, /No session transcripts found/);
-    assert.match(stderr, /No files were changed\./);
+    assert.equal(code ?? 0, 0);
+    assert.equal(stderr, '');
+    assert.match(stdout, /No pending review sessions\./);
+    assert.match(stdout, /clino review pending/);
     assert.ok(!existsSync(join(work, '.clino')), 'review latest does not create .clino');
   } finally {
     rmSync(work, { recursive: true, force: true });
@@ -1172,11 +1172,17 @@ test('review --accept all with zero candidates still creates reviewed marker', (
     const sessionFile = writeSessionFixture(work, 'codex-only.md', 'SigninwithChatGPT PressEntertocontinue');
     const accepted = clino(['review', sessionFile, '--accept', 'all'], { cwd: work });
     assert.equal(accepted.code ?? 0, 0);
+    assert.match(accepted.stdout, /No candidate memories found\./);
+    assert.match(accepted.stdout, /Marked session as reviewed\./);
+    assert.match(accepted.stdout, /No memory was written\./);
+    assert.doesNotMatch(accepted.stdout, /No candidate memories selected\./);
 
     const markerPath = join(work, '.clino', 'reviews', 'codex-only.reviewed.json');
     assert.ok(existsSync(markerPath));
     const marker = JSON.parse(readFileSync(markerPath, 'utf8'));
     assert.equal(marker.session, 'codex-only.md');
+    assert.equal(marker.status, 'reviewed');
+    assert.ok(marker.reviewedAt);
     assert.deepEqual(marker.accepted, {
       decisions: 0,
       todos: 0,
@@ -1185,7 +1191,142 @@ test('review --accept all with zero candidates still creates reviewed marker', (
       resolved: 0,
       summaries: 0,
     });
+    assert.ok(!existsSync(join(work, '.clino', 'memory')), 'zero-candidate accept does not write memory');
+
+    const pending = clino(['review', 'pending'], { cwd: work });
+    assert.match(pending.stdout, /No pending review sessions\./);
   } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+});
+
+test('review latest selects newest pending session, not reviewed zero-candidate latest', () => {
+  const home = tmp('clino-review-latest-pending-');
+  const work = tmp('clino-review-latest-pending-work-');
+  try {
+    writeHomeSessionFixture(
+      home,
+      '2026-05-25T16-00-00-000Z.md',
+      'We decided to keep review latest pending-aware and need to add pending review tests',
+    );
+    writeHomeSessionFixture(home, '2026-05-25T17-00-00-000Z.md', 'SigninwithChatGPT PressEntertocontinue');
+
+    const markLatest = clino(['review', 'latest', '--accept', 'all'], { cwd: work, clinoHome: home });
+    assert.equal(markLatest.code ?? 0, 0);
+    assert.match(markLatest.stdout, /2026-05-25T17-00-00-000Z\.md/);
+    assert.match(markLatest.stdout, /Marked session as reviewed\./);
+
+    const preview = clino(['review', 'latest'], { cwd: work, clinoHome: home });
+    assert.equal(preview.code ?? 0, 0);
+    assert.match(preview.stdout, /2026-05-25T16-00-00-000Z\.md/);
+    assert.match(preview.stdout, /decision-1\s+decision\s+Keep review latest pending-aware\./);
+    assert.match(preview.stdout, /todo-1\s+todo\s+Add pending review tests\./);
+    assert.doesNotMatch(preview.stdout, /2026-05-25T17-00-00-000Z\.md/);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+    rmSync(work, { recursive: true, force: true });
+  }
+});
+
+test('review latest --skip creates skipped marker and clears pending', () => {
+  const home = tmp('clino-review-skip-');
+  const work = tmp('clino-review-skip-work-');
+  try {
+    clino(
+      ['run', '--review', 'echo', 'We decided to keep review skip markers and need to add skip tests'],
+      { cwd: work, clinoHome: home },
+    );
+
+    const skipped = clino(['review', 'latest', '--skip'], { cwd: work, clinoHome: home });
+    assert.equal(skipped.code ?? 0, 0);
+    assert.match(skipped.stdout, /Skipped review for:/);
+    assert.match(skipped.stdout, /No memory was written\./);
+
+    const reviewsDir = join(home, 'reviews');
+    const markers = readdirSync(reviewsDir).filter((file) => file.endsWith('.reviewed.json'));
+    assert.equal(markers.length, 1);
+    const marker = JSON.parse(readFileSync(join(reviewsDir, markers[0]), 'utf8'));
+    assert.equal(marker.status, 'skipped');
+    assert.deepEqual(marker.accepted, {
+      decisions: 0,
+      todos: 0,
+      bugs: 0,
+      errors: 0,
+      resolved: 0,
+      summaries: 0,
+    });
+    const memDir = join(home, 'memory');
+    if (existsSync(memDir)) {
+      assert.equal(readdirSync(memDir).filter((f) => f.endsWith('.md')).length, 0);
+    }
+
+    const pending = clino(['review', 'pending'], { cwd: work, clinoHome: home });
+    assert.match(pending.stdout, /No pending review sessions\./);
+
+    const status = clino(['status'], { cwd: work, clinoHome: home });
+    assert.match(status.stdout, /- reviewed sessions: 1/);
+    assert.match(status.stdout, /- skipped sessions: 1/);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+    rmSync(work, { recursive: true, force: true });
+  }
+});
+
+test('review explicit session still works when session is already reviewed or skipped', () => {
+  const work = tmp('clino-review-explicit-reviewed-');
+  try {
+    const sessionFile = writeSessionFixture(
+      work,
+      'already-reviewed.md',
+      'We decided to keep explicit review paths working after markers exist.',
+    );
+    const accepted = clino(['review', sessionFile, '--accept', 'all'], { cwd: work });
+    assert.equal(accepted.code ?? 0, 0);
+
+    const preview = clino(['review', sessionFile], { cwd: work });
+    assert.equal(preview.code ?? 0, 0);
+    assert.match(preview.stdout, /decision-1\s+decision\s+Keep explicit review paths working after markers exist\./);
+
+    const skipped = clino(['review', sessionFile, '--skip'], { cwd: work });
+    assert.equal(skipped.code ?? 0, 0);
+    assert.match(skipped.stdout, /Skipped review for:\n  already-reviewed\.md/);
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+});
+
+test('review latest with all sessions reviewed reports no pending sessions', () => {
+  const work = tmp('clino-review-latest-all-reviewed-');
+  try {
+    const sessionFile = writeSessionFixture(
+      work,
+      'reviewed-only.md',
+      'We decided to keep review latest empty when every session has a marker.',
+    );
+    const accepted = clino(['review', sessionFile, '--accept', 'all'], { cwd: work });
+    assert.equal(accepted.code ?? 0, 0);
+
+    const latest = clino(['review', 'latest'], { cwd: work });
+    assert.equal(latest.code ?? 0, 0);
+    assert.match(latest.stdout, /No pending review sessions\./);
+    assert.match(latest.stdout, /clino review pending/);
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+});
+
+test('review pending shows no-candidate sessions as [empty]', () => {
+  const home = tmp('clino-review-pending-empty-');
+  const work = tmp('clino-review-pending-empty-work-');
+  try {
+    writeHomeSessionFixture(home, '2026-05-25T18-00-00-000Z.md', 'SigninwithChatGPT PressEntertocontinue');
+    const { code, stdout } = clino(['review', 'pending'], { cwd: work, clinoHome: home });
+    assert.equal(code ?? 0, 0);
+    assert.match(stdout, /2026-05-25T18-00-00-000Z\.md\s+no candidates\s+\[empty\]/);
+    assert.match(stdout, /clino review latest/);
+    assert.match(stdout, /clino review <session-file> --skip/);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
     rmSync(work, { recursive: true, force: true });
   }
 });

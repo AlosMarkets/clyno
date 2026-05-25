@@ -160,8 +160,8 @@ Usage:
   clino inspect latest [--show-cleaned] [--max-chars <n>]
   clino inspect <session-file> [--show-cleaned] [--max-chars <n>]
   clino review pending
-  clino review latest [--accept all|<ids>] [--no-summary] [--include-suspicious]
-  clino review <session-file> [--accept all|<ids>] [--no-summary] [--include-suspicious]
+  clino review latest [--accept all|<ids>] [--no-summary] [--include-suspicious] [--skip]
+  clino review <session-file> [--accept all|<ids>] [--no-summary] [--include-suspicious] [--skip]
   clino summarize [--dry-run] [--show-cleaned] [--max-chars <n>] <session-file>
   clino memory list [--type <type>] [--include-resolved]
   clino memory show <id>
@@ -191,6 +191,7 @@ Examples:
   clino review pending
   clino review latest
   clino review latest --accept all
+  clino review latest --skip
   clino summarize --dry-run .clino/sessions/2026-05-24-20-30-00.md
   clino memory list
   clino memory show decision-1
@@ -687,6 +688,23 @@ function newestSessionFile(): string | null {
   return files.length === 0 ? null : files[0];
 }
 
+function pendingSessionPathsNewestFirst(): string[] {
+  return sessionTranscriptPathsNewestFirst().filter((file) => !isSessionReviewed(file));
+}
+
+function newestPendingSessionFile(): string | null {
+  const pending = pendingSessionPathsNewestFirst();
+  return pending.length === 0 ? null : pending[0];
+}
+
+function printNoPendingReviewSessions(): number {
+  console.log('No pending review sessions.');
+  console.log('');
+  console.log('Suggest:');
+  console.log('  clino review pending');
+  return 0;
+}
+
 function reviewMarkerFilename(sessionBasename: string): string {
   const safe = sessionBasename.replace(/[^a-zA-Z0-9._-]/g, '_');
   const stem = safe.endsWith('.md') ? safe.slice(0, -3) : safe;
@@ -706,8 +724,23 @@ function countReviewedSessions(): number {
   return readdirSync(REVIEWS_DIR).filter((file) => file.endsWith('.reviewed.json')).length;
 }
 
+function countSkippedReviewSessions(): number {
+  if (!existsSync(REVIEWS_DIR)) return 0;
+  let skipped = 0;
+  for (const file of readdirSync(REVIEWS_DIR)) {
+    if (!file.endsWith('.reviewed.json')) continue;
+    try {
+      const marker = JSON.parse(readFileSync(join(REVIEWS_DIR, file), 'utf8')) as { status?: string };
+      if (marker.status === 'skipped') skipped++;
+    } catch {
+      /* ignore malformed markers */
+    }
+  }
+  return skipped;
+}
+
 function countPendingReviewSessions(): number {
-  return sessionTranscriptPathsNewestFirst().filter((file) => !isSessionReviewed(file)).length;
+  return pendingSessionPathsNewestFirst().length;
 }
 
 interface ReviewMarkerAccepted {
@@ -728,10 +761,17 @@ function shouldWriteReviewMarker(
   return selected.length > 0;
 }
 
-function writeReviewMarker(sessionPath: string, written: MemoryCounts): void {
+type ReviewMarkerStatus = 'reviewed' | 'skipped';
+
+function writeReviewMarker(
+  sessionPath: string,
+  written: MemoryCounts,
+  status: ReviewMarkerStatus = 'reviewed',
+): void {
   mkdirSync(REVIEWS_DIR, { recursive: true });
   const marker = {
     session: basename(sessionPath),
+    status,
     reviewedAt: new Date().toISOString(),
     accepted: {
       decisions: written.decisions,
@@ -1428,6 +1468,7 @@ interface ParsedReviewArgs {
   accept?: string;
   noSummary: boolean;
   includeSuspicious: boolean;
+  skip: boolean;
 }
 
 interface ReviewCandidate {
@@ -1439,7 +1480,7 @@ interface ReviewCandidate {
 }
 
 const REVIEW_USAGE =
-  'Usage: clino review <latest|session-file> [--accept all|<ids>] [--no-summary] [--include-suspicious]';
+  'Usage: clino review <latest|session-file> [--accept all|<ids>] [--no-summary] [--include-suspicious] [--skip]';
 
 const REVIEW_BUCKETS: Array<{ category: MemoryType; displayType: MemoryDisplayType }> = [
   { category: 'decisions', displayType: 'decision' },
@@ -1454,6 +1495,7 @@ function parseReviewArgs(args: string[]): ParsedReviewArgs | null {
   let accept: string | undefined;
   let noSummary = false;
   let includeSuspicious = false;
+  let skip = false;
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
@@ -1475,6 +1517,10 @@ function parseReviewArgs(args: string[]): ParsedReviewArgs | null {
       includeSuspicious = true;
       continue;
     }
+    if (arg === '--skip') {
+      skip = true;
+      continue;
+    }
     if (arg.startsWith('--')) {
       console.error(`Unknown review option: ${arg}`);
       console.error(REVIEW_USAGE);
@@ -1488,7 +1534,13 @@ function parseReviewArgs(args: string[]): ParsedReviewArgs | null {
     return null;
   }
 
-  return { targetArg: positionals[0], accept, noSummary, includeSuspicious };
+  if (skip && accept) {
+    console.error('Cannot combine --skip and --accept.');
+    console.error(REVIEW_USAGE);
+    return null;
+  }
+
+  return { targetArg: positionals[0], accept, noSummary, includeSuspicious, skip };
 }
 
 function reviewCandidateSuspicious(
@@ -1666,7 +1718,24 @@ function formatAcceptedReview(
   report: ExtractionReport,
   selected: ReviewCandidate[],
   written: MemoryCounts,
+  opts: { accept?: string; candidates?: ReviewCandidate[] } = {},
 ): string[] {
+  if (
+    selected.length === 0 &&
+    opts.accept?.toLowerCase() === 'all' &&
+    (opts.candidates?.length ?? 0) === 0
+  ) {
+    return [
+      'Clino review',
+      '',
+      `Session: ${report.sessionFilePath}`,
+      '',
+      'No candidate memories found.',
+      'Marked session as reviewed.',
+      'No memory was written.',
+    ];
+  }
+
   if (selected.length === 0) {
     return [
       'Clino review',
@@ -1692,8 +1761,17 @@ function formatAcceptedReview(
   ];
 }
 
+function formatSkippedReview(sessionPath: string): string[] {
+  return [
+    'Skipped review for:',
+    `  ${basename(sessionPath)}`,
+    '',
+    'No memory was written.',
+  ];
+}
+
 function printReviewPending(): number {
-  const pending = sessionTranscriptPathsNewestFirst().filter((file) => !isSessionReviewed(file));
+  const pending = pendingSessionPathsNewestFirst();
   if (pending.length === 0) {
     console.log('No pending review sessions.');
     return 0;
@@ -1702,10 +1780,24 @@ function printReviewPending(): number {
   const lines = ['Pending review sessions', ''];
   for (const sessionPath of pending) {
     let suffix = 'no candidates';
+    let noCandidates = true;
     try {
-      suffix = formatPendingCandidateCounts(buildExtractionReport(sessionPath));
+      const report = buildExtractionReport(sessionPath);
+      suffix = formatPendingCandidateCounts(report);
+      noCandidates =
+        report.counts.decisions +
+          report.counts.todos +
+          report.counts.bugs +
+          report.counts.errors +
+          report.counts.resolved +
+          report.counts.summary ===
+        0;
     } catch {
       /* keep fallback label */
+    }
+    if (noCandidates) {
+      lines.push(`${basename(sessionPath)}  ${suffix}  [empty]`);
+      continue;
     }
     const stat = statSync(sessionPath);
     const date = new Date(stat.mtimeMs).toISOString().split('T')[0];
@@ -1716,8 +1808,10 @@ function printReviewPending(): number {
   lines.push(
     '',
     'Review with:',
+    '  clino review latest',
     '  clino review <session-file>',
     '  clino review <session-file> --accept all',
+    '  clino review <session-file> --skip',
   );
   console.log(lines.join('\n'));
   return 0;
@@ -1728,31 +1822,31 @@ function printReview(args: string[]): number {
   if (!parsed) return 1;
 
   if (parsed.targetArg === 'pending') {
-    if (parsed.accept) {
-      console.error('clino review pending does not accept --accept.');
+    if (parsed.accept || parsed.skip) {
+      console.error('clino review pending does not accept --accept or --skip.');
       return 1;
     }
     return printReviewPending();
   }
 
   const target = parsed.targetArg === 'latest'
-    ? newestSessionFile()
+    ? newestPendingSessionFile()
     : resolveSessionArg(parsed.targetArg);
 
-  if (!target) {
-    console.error(`No session transcripts found in ${SESSIONS_DIR}.`);
-    console.error('No files were changed.');
-    return 1;
+  if (parsed.targetArg === 'latest' && !target) {
+    return printNoPendingReviewSessions();
   }
-  if (!existsSync(target)) {
-    console.error(`Session file not found: ${target}`);
+
+  const sessionPath = target!;
+  if (!existsSync(sessionPath)) {
+    console.error(`Session file not found: ${sessionPath}`);
     console.error('No files were changed.');
     return 1;
   }
 
   let report: ExtractionReport;
   try {
-    report = buildExtractionReport(target);
+    report = buildExtractionReport(sessionPath);
   } catch (err) {
     console.error(`Could not review session: ${(err as Error).message}`);
     console.error('No files were changed.');
@@ -1760,6 +1854,13 @@ function printReview(args: string[]): number {
   }
 
   const candidates = buildReviewCandidates(report);
+
+  if (parsed.skip) {
+    writeReviewMarker(report.sessionFilePath, emptyMemoryCounts(), 'skipped');
+    console.log(formatSkippedReview(report.sessionFilePath).join('\n'));
+    return 0;
+  }
+
   if (!parsed.accept) {
     console.log(formatReviewPreview(report, candidates, parsed.targetArg).join('\n'));
     return 0;
@@ -1779,9 +1880,14 @@ function printReview(args: string[]): number {
 
   const written = writeReviewCandidates(selection.selected, report.sessionFilePath);
   if (shouldWriteReviewMarker(parsed.accept, candidates, selection.selected)) {
-    writeReviewMarker(report.sessionFilePath, written);
+    writeReviewMarker(report.sessionFilePath, written, 'reviewed');
   }
-  console.log(formatAcceptedReview(report, selection.selected, written).join('\n'));
+  console.log(
+    formatAcceptedReview(report, selection.selected, written, {
+      accept: parsed.accept,
+      candidates,
+    }).join('\n'),
+  );
   return 0;
 }
 
@@ -2239,6 +2345,9 @@ function printStatus(): void {
     'Review:',
     `- pending sessions: ${countPendingReviewSessions()}`,
     `- reviewed sessions: ${countReviewedSessions()}`,
+    ...(countSkippedReviewSessions() > 0
+      ? [`- skipped sessions: ${countSkippedReviewSessions()}`]
+      : []),
     '',
     'Try:',
     '- clino find "auth"',

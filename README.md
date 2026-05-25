@@ -270,19 +270,33 @@ Review before writing memory:
 ```bash
 clino review latest
 clino review latest --accept all
+clino review latest --skip
 clino review .clino/sessions/<file>.md --accept decision-1,todo-1
+clino review .clino/sessions/<file>.md --skip
 ```
 
 `clino review` runs the same extraction pipeline as `summarize`, shows
-deterministic candidate IDs, and is read-only unless `--accept` is provided.
-Use `--accept all` to write every candidate or pass a comma-separated ID list to
-write only selected memories. Add `--no-summary` with `--accept all` to skip the
-synthesized summary.
+deterministic candidate IDs, and is read-only unless `--accept` or `--skip` is
+provided. Use `--accept all` to write every candidate or pass a comma-separated ID
+list to write only selected memories. Add `--no-summary` with `--accept all` to
+skip the synthesized summary.
+
+`clino review latest` selects the newest **pending** session (one without a marker
+in `.clino/reviews/`), not simply the newest transcript file. If every session is
+already reviewed or skipped, it prints `No pending review sessions.` and exits 0.
+
+Zero-candidate sessions can still be closed out: `clino review latest --accept all`
+creates a reviewed marker, writes no memory, and prints `Marked session as reviewed.`
+Use `--skip` to mark a session reviewed without writing memory when you do not want
+to accept any candidates.
+
+Explicit `clino review <session-file>` still works for any transcript path, even if
+that session already has a reviewed or skipped marker.
 
 Review tracking:
 
-- `clino review pending` shows captured sessions that have not been accepted/reviewed.
-- Accepted sessions get a local marker under `.clino/reviews/`.
+- `clino review pending` lists sessions without a marker in `.clino/reviews/`.
+- Reviewed or skipped sessions get a local marker under `.clino/reviews/`.
 - Raw sessions remain untouched.
 
 Manage stored memory:
