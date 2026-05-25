@@ -2577,6 +2577,24 @@ switch (command) {
       console.log('');
       console.log('Created resolved memory:');
       console.log(`  ${resolvedText}`);
+
+      // Warn if the new resolved memory would suppress other open items
+      const allItems = readAllMemoryItems();
+      const idByText = new Map<string, string>();
+      for (const it of allItems) idByText.set(it.text, it.id);
+      const rawTodos = readStoredMemoryItems('todos.md', 'todos');
+      const rawBugs = readStoredMemoryItems('bugs.md', 'bugs');
+      const extraMatches = [...rawTodos, ...rawBugs].filter(
+        (t) => t !== item.text && memoryResolvesItem(t, resolvedText),
+      );
+      if (extraMatches.length > 0) {
+        console.log('');
+        console.log('Warning: this resolved memory also matches other open items:');
+        for (const t of extraMatches) {
+          const id = idByText.get(t) ?? '?';
+          console.log(`- ${id} ${t}`);
+        }
+      }
       break;
     }
 
@@ -2589,6 +2607,24 @@ switch (command) {
     }
     writeMemoryFile('resolved.md', [resolved], 'manual');
     console.log(`Resolved memory recorded: ${resolved}`);
+
+    // Warn if the new resolved memory would suppress other open items
+    const allItems = readAllMemoryItems();
+    const idByText = new Map<string, string>();
+    for (const it of allItems) idByText.set(it.text, it.id);
+    const rawTodos = readStoredMemoryItems('todos.md', 'todos');
+    const rawBugs = readStoredMemoryItems('bugs.md', 'bugs');
+    const extraMatches = [...rawTodos, ...rawBugs].filter(
+      (t) => t !== resolveText && memoryResolvesItem(t, resolved),
+    );
+    if (extraMatches.length > 0) {
+      console.log('');
+      console.log('Warning: this resolved memory also matches other open items:');
+      for (const t of extraMatches) {
+        const id = idByText.get(t) ?? '?';
+        console.log(`- ${id} ${t}`);
+      }
+    }
     break;
   }
 

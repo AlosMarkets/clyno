@@ -309,9 +309,11 @@ clino memory delete <id> --dry-run
 ```
 
 Memory IDs are human-readable display IDs like `decision-1`, `todo-1`, and
-`bug-1`. Memory management is local and private: listing and showing memories
-does not create `.clino/`, and deletion only edits the selected markdown memory
-item, not raw session transcripts.
+`bug-1`. Memory IDs are display IDs generated from the current list; run
+`clino memory list` before resolving or deleting to see current IDs. Memory
+management is local and private: listing and showing memories does not create
+`.clino/`, and deletion only edits the selected markdown memory item, not raw
+session transcripts.
 
 Memory rebuild:
 

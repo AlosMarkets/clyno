@@ -1711,6 +1711,21 @@ const RESOLUTION_MATCH_STOP = new Set([
   'address', 'addressed', 'addressing', 'repair', 'repaired', 'repairing',
   'done', 'bug', 'bugs', 'todo', 'todos', 'issue', 'issues', 'problem',
   'problems', 'file', 'files', 'about',
+  // Generic resolution-adjacent verbs and domain nouns that should not
+  // count as distinctive shared tokens for resolution matching.
+  'add', 'adding', 'added',
+  'memory', 'memories',
+  'workflow', 'workflows',
+  'before', 'after', 'any', 'all', 'some',
+  'future', 'past', 'current',
+  'feature', 'features',
+  'support', 'supports', 'supported', 'supporting',
+  'implement', 'implements', 'implemented', 'implementing',
+  'ensure', 'ensures', 'ensured', 'ensuring',
+  'remove', 'removes', 'removed', 'removing',
+  'update', 'updates', 'updated', 'updating',
+  'make', 'makes', 'making',
+  'need', 'needs', 'needed', 'needing',
 ]);
 
 function canonicalMatchToken(token: string): string {
@@ -1735,7 +1750,9 @@ function matchTokens(text: string): Set<string> {
 
     for (const variant of variants) {
       const canonical = canonicalMatchToken(variant);
-      if (canonical.length < 3 || RESOLUTION_MATCH_STOP.has(canonical)) continue;
+      if (canonical.length < 3 ||
+          RESOLUTION_MATCH_STOP.has(variant) ||
+          RESOLUTION_MATCH_STOP.has(canonical)) continue;
       tokens.add(canonical);
     }
   }
@@ -1768,8 +1785,14 @@ function intersects(a: Set<string>, b: Set<string>): boolean {
 
 /**
  * Whether a resolved memory is close enough to suppress an older open bug/TODO.
- * The matcher is intentionally conservative: it needs shared concrete tokens,
- * a shared file/reference anchor, or a broad documentation completion signal.
+ * Uses conservative matching: generic verbs (add, fix, resolve...) and domain
+ * nouns (memory, workflow, feature...) are stripped before comparison, and
+ * matches require either:
+ *   1. Every distinctive token in the resolved item appearing in the open item
+ *      (the "subset" rule), or
+ *   2. A shared file anchor plus at least 3 shared tokens, or
+ *   3. At least 3 distinctive shared tokens, or
+ *   4. The special "code fence" pattern.
  */
 export function memoryResolvesItem(openItem: string, resolvedItem: string): boolean {
   if (!hasResolutionSignal(resolvedItem.toLowerCase())) return false;
@@ -1780,13 +1803,20 @@ export function memoryResolvesItem(openItem: string, resolvedItem: string): bool
   const sharedAnchors = intersects(referenceAnchors(openItem), referenceAnchors(resolvedItem));
   const sharedCodeFence = shared.includes('code') && shared.includes('fence');
 
-  if (sharedAnchors && shared.length >= 2) return true;
-  if (shared.length >= 3) return true;
+  // Code fence special case (e.g. GUARDRAILS.md unclosed code fence)
   if (sharedCodeFence) return true;
 
-  return sharedAnchors &&
-    hasDocumentationSignalForResolution(openItem) &&
-    hasDocumentationSignalForResolution(resolvedItem);
+  // File anchor + at least 3 shared content tokens
+  if (sharedAnchors && shared.length >= 3) return true;
+
+  // Every distinctive token in resolved item appears in open item
+  // (catches exact matches and close variants without generic-word noise)
+  if (shared.length >= 2 && resolvedTokens.size > 0 && shared.length === resolvedTokens.size) return true;
+
+  // Broader content overlap without anchors
+  if (shared.length >= 3) return true;
+
+  return false;
 }
 
 // ---------------------------------------------------------------------------

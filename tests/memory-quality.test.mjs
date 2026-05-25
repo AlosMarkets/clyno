@@ -1251,3 +1251,94 @@ test('runtime status chrome: inline contamination in extract is rejected', () =>
   const signals = extractSignals(contaminated);
   for (const list of Object.values(signals)) assert.deepEqual(list, []);
 });
+
+// --------------------------------------------------------------------------
+// 20. Resolution matching — false-positive suppression (tight matching)
+// --------------------------------------------------------------------------
+test('memoryResolvesItem: resolves own exact text', () => {
+  const open = 'Add a manual memory review workflow.';
+  const resolved = 'Resolved: Add a manual memory review workflow.';
+  assert.equal(memoryResolvesItem(open, resolved), true);
+});
+
+test('memoryResolvesItem: resolves close variant without articles', () => {
+  assert.equal(memoryResolvesItem('Add manual memory review workflow.', 'Resolved: Add a manual memory review workflow.'), true);
+});
+
+test('memoryResolvesItem: resolves variant without generic prefix', () => {
+  assert.equal(memoryResolvesItem('Manual memory review workflow.', 'Resolved: Add a manual memory review workflow.'), true);
+});
+
+test('memoryResolvesItem: does NOT match unrelated todo sharing generic words', () => {
+  const open = 'Add secret detection before any future Git memory export/commit workflow.';
+  const resolved = 'Resolved: Add a manual memory review workflow.';
+  assert.equal(memoryResolvesItem(open, resolved), false);
+});
+
+test('memoryResolvesItem: does NOT match other memory-item todos', () => {
+  const resolved = 'Resolved: Add a manual memory review workflow.';
+  assert.equal(memoryResolvesItem('Add memory delete dry-run test.', resolved), false);
+  assert.equal(memoryResolvesItem('Add Git memory export workflow.', resolved), false);
+  assert.equal(memoryResolvesItem('Add clino status command.', resolved), false);
+});
+
+test('memoryResolvesItem: does NOT match unrelated resolved items', () => {
+  const openBug = 'GUARDRAILS.md is incomplete/truncated: it ends with an unclosed code fence.';
+  assert.equal(memoryResolvesItem(openBug, 'Fixed unrelated Redis blacklist bug.'), false);
+});
+
+// --------------------------------------------------------------------------
+// 21. Resolution matching — positive matching (guardrails code fence etc.)
+// --------------------------------------------------------------------------
+test('memoryResolvesItem: closes guardrails code fence bug', () => {
+  const openBug = 'GUARDRAILS.md is incomplete/truncated: it ends with an unclosed code fence.';
+  const resolved = 'Fixed GUARDRAILS.md unclosed code fence.';
+  assert.equal(memoryResolvesItem(openBug, resolved), true);
+});
+
+test('memoryResolvesItem: fix guardrails variant also matches', () => {
+  assert.equal(memoryResolvesItem('Fix GUARDRAILS.md unclosed code fence.', 'Fixed GUARDRAILS.md unclosed code fence.'), true);
+});
+
+test('memoryResolvesItem: documentation todo not suppressed by different bug', () => {
+  const resolved = 'Fixed GUARDRAILS.md unclosed code fence.';
+  assert.equal(memoryResolvesItem('Add GUARDRAILS.md documentation section.', resolved), false);
+});
+
+test('memoryResolvesItem: secret detection stays open when only manual review is resolved', () => {
+  const openItems = [
+    'Add a manual memory review workflow.',
+    'Add secret detection before any future Git memory export/commit workflow.',
+    'Add clino status command.',
+    'Add memory delete dry-run test.',
+  ];
+  const resolved = 'Resolved: Add a manual memory review workflow.';
+  const matched = openItems.filter((o) => memoryResolvesItem(o, resolved));
+  assert.deepEqual(matched, ['Add a manual memory review workflow.']);
+});
+
+test('memoryResolvesItem: inject secret detection should show open todos', () => {
+  // Simulating: inject "secret detection" should still show secret detection as open
+  const openItems = [
+    'Add a manual memory review workflow.',
+    'Add secret detection before any future Git memory export/commit workflow.',
+    'Add clino status command.',
+    'Add memory delete dry-run test.',
+  ];
+  const resolved = 'Resolved: Add a manual memory review workflow.';
+  const openTodos = openItems.filter((o) => !memoryResolvesItem(o, resolved));
+  assert.ok(openTodos.includes('Add secret detection before any future Git memory export/commit workflow.'));
+  assert.ok(!openTodos.includes('Add a manual memory review workflow.'));
+  assert.equal(openTodos.length, 3);
+});
+
+test('memoryResolvesItem: inject memory review should show resolved', () => {
+  // Simulating: inject "memory review" — manual review is resolved, others stay open
+  const openItems = [
+    'Add a manual memory review workflow.',
+    'Add secret detection before any future Git memory export/commit workflow.',
+  ];
+  const resolved = 'Resolved: Add a manual memory review workflow.';
+  const suppressed = openItems.filter((o) => memoryResolvesItem(o, resolved));
+  assert.deepEqual(suppressed, ['Add a manual memory review workflow.']);
+});
