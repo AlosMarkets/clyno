@@ -522,7 +522,8 @@ export function cleanTranscriptForExtraction(raw: string): string {
         !isCodexTaskChrome(line) &&
         !isClaudeTaskChrome(line) &&
         !isSessionStatusNoise(line) &&
-        !isPromptTemplatePlaceholder(line),
+        !isPromptTemplatePlaceholder(line) &&
+        !isRuntimeStatusChrome(line),
     );
 
   // Block-level pass: strip pasted prompt/spec instruction blocks (headings plus
@@ -540,9 +541,10 @@ export function cleanTranscriptForExtraction(raw: string): string {
       !isPromptRequestDirective(line) &&
       !isCodexTaskChrome(line) &&
       !isClaudeTaskChrome(line) &&
-      !isSessionStatusNoise(line) &&
-      !isPromptTemplatePlaceholder(line),
-  );
+       !isSessionStatusNoise(line) &&
+        !isPromptTemplatePlaceholder(line) &&
+        !isRuntimeStatusChrome(line),
+    );
 
   // Final safety pass: scrub any residual OAuth/auth query tokens.
   return redactAuthMarkers(unwrapped.join('\n'));
@@ -1002,6 +1004,30 @@ export function isCursorTaskChrome(text: string): boolean {
 }
 
 // ---------------------------------------------------------------------------
+// Runtime status / progress chrome (Codex, Cursor — any agent)
+//
+// TUI progress lines that appear during execution: auto-run percentages,
+// braille spinner fragments with token counts. These are agent runtime
+// status lines, not project content.
+// ---------------------------------------------------------------------------
+
+const RUNTIME_STATUS_PATTERNS: RegExp[] = [
+  // "Auto · 7.3% Auto-run" (Codex auto-run mode progress with middle-dot)
+  /^auto\s*·\s*\d+(?:\.\d+)?%\s*auto-?run\b/i,
+  // "7.3% Auto-run" (standalone percentage + mode label)
+  /^\d+(?:\.\d+)?%\s*auto-?run\b/i,
+  // Braille spinner chars + progress description
+  /^[\u2800-\u28FF]+\s+(?:working|reading|thinking)\b/i,
+];
+
+/** Whether a line is agent runtime status/progress chrome (never project content). */
+export function isRuntimeStatusChrome(text: string): boolean {
+  const t = stripPromptListPrefix(text);
+  if (!t) return false;
+  return RUNTIME_STATUS_PATTERNS.some((re) => re.test(t));
+}
+
+// ---------------------------------------------------------------------------
 // Review/analysis conclusions (not concrete bugs)
 // ---------------------------------------------------------------------------
 
@@ -1223,6 +1249,8 @@ export function repairMemoryText(raw: string): string {
   // Strip trailing spinner / token contamination (braille glyphs + "Working").
   t = t.replace(/[\s,;]*[\u2800-\u28FF]+\s*working\b(?:\s+\d+\s*k?\s*tokens?)?[.\s]*$/gi, '').trim();
   t = t.replace(/\bworking\s+\d+\s*k?\s*tokens?\b[.\s]*$/gi, '').trim();
+  // Strip trailing runtime status chrome (e.g. ", Auto · 7.3% Auto-run").
+  t = t.replace(/,?\s*auto\s*·\s*\d+(?:\.\d+)?%\s*auto-?run\b[.\s]*$/gi, '').trim();
 
   // Capitalize the first character unless it opens with a code/command token.
   const firstTok = t.split(/\s+/)[0] || '';
@@ -1303,7 +1331,7 @@ export function isQualityMemory(text: string, type: MemoryType): boolean {
   if (!text) return false;
   const core = text.trim().replace(/^[-*+•]\s+/, '').replace(/[.!?]+$/, '').trim();
   if (!core) return false;
-  if (isTerminalUiLine(core) || isAgentProcessNarration(core)) return false;
+  if (isTerminalUiLine(core) || isAgentProcessNarration(core) || isRuntimeStatusChrome(core)) return false;
   if (isCodexAuthNoise(core) || isClaudeAuthNoise(core) || isCursorAuthNoise(core) || isDiffOrCodeNoise(core)) return false;
   if (isClinoOutputNoise(core) || isPromptSpecDirective(core) || isPromptRequestDirective(core)) return false;
   if (isCodexTaskChrome(core) || isClaudeTaskChrome(core) || isCursorTaskChrome(core) || isReviewAnalysisSummary(core) || isSessionStatusNoise(core)) {
@@ -1621,7 +1649,8 @@ export function extractSignals(content: string): ExtractedSignals {
       isClaudeTaskChrome(sentence) ||
       isCursorTaskChrome(sentence) ||
       isReviewAnalysisSummary(sentence) ||
-      isSessionStatusNoise(sentence)
+      isSessionStatusNoise(sentence) ||
+      isRuntimeStatusChrome(sentence)
     ) {
       continue;
     }
@@ -1654,7 +1683,8 @@ export function isSuspiciousCandidate(text: string, type: MemoryType | 'summarie
     isClaudeTaskChrome(core) ||
     isCursorTaskChrome(core) ||
     isClaudeAuthNoise(core) ||
-    isReviewAnalysisSummary(core)
+    isReviewAnalysisSummary(core) ||
+    isRuntimeStatusChrome(core)
   ) {
     return true;
   }

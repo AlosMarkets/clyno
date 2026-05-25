@@ -19,10 +19,12 @@ import {
   isClaudeTaskChrome,
   isClaudeAuthNoise,
   isCursorTaskChrome,
+  isRuntimeStatusChrome,
   isReviewAnalysisSummary,
   isSuspiciousCandidate,
   memoryResolvesItem,
 } from '../dist/memory.js';
+
 
 // --------------------------------------------------------------------------
 // 1. Phrase repair (acceptance criteria #2)
@@ -1176,4 +1178,76 @@ test('cursor chrome: compact Cursor UI blob yields no memories', () => {
   const s = extractSignals(compact);
   for (const list of Object.values(s)) assert.deepEqual(list, []);
   assert.equal(synthesizeSummary(s), '');
+});
+
+// --------------------------------------------------------------------------
+// 14. Runtime status / progress chrome filtering
+// --------------------------------------------------------------------------
+
+test('runtime status chrome: isRuntimeStatusChrome detects auto-run patterns', () => {
+  // Must detect.
+  assert.equal(isRuntimeStatusChrome('Auto · 7.3% Auto-run'), true);
+  assert.equal(isRuntimeStatusChrome('Auto · 100% Auto-run'), true);
+  assert.equal(isRuntimeStatusChrome('7.3% Auto-run'), true);
+  assert.equal(isRuntimeStatusChrome('⠠⠜ Working'), true);
+  assert.equal(isRuntimeStatusChrome('⠠⠜ Working 32 tokens'), true);
+  assert.equal(isRuntimeStatusChrome('⠰⠰ Reading'), true);
+  // Must NOT detect real prose.
+  assert.equal(isRuntimeStatusChrome('Use project-local .clino storage.'), false);
+  assert.equal(isRuntimeStatusChrome('Need to add clino status command.'), false);
+  assert.equal(isRuntimeStatusChrome('Fixed GUARDRAILS.md unclosed code fence.'), false);
+  assert.equal(isRuntimeStatusChrome('We decided to use JWT auth.'), false);
+});
+
+test('runtime status chrome: standalone auto-run lines are cleaned', () => {
+  const bad = [
+    'Auto · 7.3% Auto-run',
+    '7.3% Auto-run',
+    '⠠⠜ Working',
+    '⠰⠰ Working 32 tokens',
+    '⠘⠣ Reading',
+  ].join('\n');
+
+  const cleaned = cleanTranscriptForExtraction(bad);
+  assert.equal(cleaned.trim(), '');
+
+  const signals = extractSignals(bad);
+  for (const list of Object.values(signals)) assert.deepEqual(list, []);
+
+  assert.equal(synthesizeSummary(signals), '');
+});
+
+test('runtime status chrome: real memory adjacent to runtime status still extracts', () => {
+  const transcript = [
+    'Auto · 7.3% Auto-run',
+    'We decided to use project-local .clino storage.',
+    '⠠⠜ Working',
+    'Need to add clino status command.',
+    '⠰⠰ Reading',
+  ].join('\n');
+
+  const signals = extractSignals(transcript);
+  assert.deepEqual(signals.decisions, ['Use project-local .clino storage.']);
+  assert.deepEqual(signals.todos, ['Add clino status command.']);
+  for (const list of [signals.bugs, signals.errors, signals.resolved]) assert.deepEqual(list, []);
+});
+
+test('runtime status chrome: trailing auto-run contamination is repaired', () => {
+  const repaired = repairMemoryText(
+    'Default clino inject limits are 8 items and 6000 characters; ranking prefers exact matches, Auto · 7.3% Auto-run.',
+  );
+  // The auto-run suffix must be stripped.
+  assert.doesNotMatch(repaired, /Auto-run/);
+  assert.doesNotMatch(repaired, /auto\s*·\s*7\.3%/i);
+  // Core content preserved.
+  assert.match(repaired, /Default clino inject limits/);
+  assert.match(repaired, /ranking prefers exact matches/);
+});
+
+test('runtime status chrome: inline contamination in extract is rejected', () => {
+  const contaminated =
+    'thinking about limits, Auto · 7.3% Auto-run, and ranking';
+  // Does not survive extraction.
+  const signals = extractSignals(contaminated);
+  for (const list of Object.values(signals)) assert.deepEqual(list, []);
 });
