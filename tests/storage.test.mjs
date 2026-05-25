@@ -173,6 +173,7 @@ test('status: counts sessions and memory items that exist', () => {
     assert.match(stdout, /- todos: 1/);
     assert.match(stdout, /- bugs: 0/);
     assert.match(stdout, /- errors: 0/);
+    assert.match(stdout, /- resolved: 0/);
     assert.match(stdout, /- summaries: 1/);
   } finally {
     rmSync(work, { recursive: true, force: true });
@@ -274,6 +275,70 @@ test('find and inject use lightweight documentation aliases', () => {
 
     const guardrails = clino(['find', 'guardrails'], { cwd: work });
     assert.match(guardrails.stdout, /GUARDRAILS\.md/, 'guardrails query finds guardrails memory');
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+});
+
+test('resolved memories suppress matching open bugs during inject and are labeled in find', () => {
+  const work = tmp('clino-resolved-');
+  const sessionsDir = join(work, '.clino', 'sessions');
+  mkdirSync(sessionsDir, { recursive: true });
+  const bugSession = join(sessionsDir, 'bug.md');
+  const fixedSession = join(sessionsDir, 'fixed.md');
+  writeFileSync(
+    bugSession,
+    '# Session\n\n## Transcript\n\n```\nGUARDRAILS.md is incomplete/truncated: it ends with an unclosed code fence.\n```\n',
+  );
+  writeFileSync(
+    fixedSession,
+    '# Session\n\n## Transcript\n\n```\nFixed GUARDRAILS.md unclosed code fence.\n```\n',
+  );
+
+  try {
+    assert.equal(clino(['summarize', bugSession], { cwd: work }).code ?? 0, 0);
+    assert.equal(clino(['summarize', fixedSession], { cwd: work }).code ?? 0, 0);
+
+    const resolved = join(work, '.clino', 'memory', 'resolved.md');
+    assert.ok(existsSync(resolved), 'resolved memory file is written');
+    assert.match(readFileSync(resolved, 'utf8'), /type: resolved/);
+    assert.match(readFileSync(resolved, 'utf8'), /Fixed GUARDRAILS\.md unclosed code fence\./);
+
+    const found = clino(['find', 'GUARDRAILS'], { cwd: work });
+    assert.match(found.stdout, /bugs\.md/);
+    assert.match(found.stdout, /incomplete\/truncated/);
+    assert.match(found.stdout, /resolved\.md \(Resolved\)/);
+    assert.match(found.stdout, /Fixed GUARDRAILS\.md unclosed code fence\./);
+
+    const injected = clino(['inject', 'GUARDRAILS'], { cwd: work });
+    assert.doesNotMatch(injected.stdout, /## Open Bugs/);
+    assert.doesNotMatch(injected.stdout, /incomplete\/truncated/);
+    assert.match(injected.stdout, /## Recently Resolved/);
+    assert.match(injected.stdout, /Fixed GUARDRAILS\.md unclosed code fence\./);
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+});
+
+test('resolve command records a marker that suppresses matching open work', () => {
+  const work = tmp('clino-resolve-cmd-');
+  const memDir = join(work, '.clino', 'memory');
+  mkdirSync(memDir, { recursive: true });
+  writeFileSync(
+    join(memDir, 'bugs.md'),
+    '---\ntype: bugs\ndate: 2026-05-25\nsource: test.md\n---\n\n' +
+      '- GUARDRAILS.md is incomplete/truncated: it ends with an unclosed code fence.\n',
+  );
+
+  try {
+    const resolved = clino(['resolve', 'GUARDRAILS code fence'], { cwd: work });
+    assert.equal(resolved.code ?? 0, 0);
+    assert.match(resolved.stdout, /Resolved memory recorded: Resolved GUARDRAILS code fence\./);
+
+    const injected = clino(['inject', 'GUARDRAILS'], { cwd: work });
+    assert.doesNotMatch(injected.stdout, /## Open Bugs/);
+    assert.match(injected.stdout, /## Recently Resolved/);
+    assert.match(injected.stdout, /Resolved GUARDRAILS code fence\./);
   } finally {
     rmSync(work, { recursive: true, force: true });
   }

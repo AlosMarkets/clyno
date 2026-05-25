@@ -10,6 +10,7 @@ import {
   parseMemoryItems,
   stripMetadataPrefix,
   cleanTranscriptForExtraction,
+  memoryResolvesItem,
 } from '../dist/memory.js';
 
 // --------------------------------------------------------------------------
@@ -120,6 +121,35 @@ test('extract: full transcript yields clean, deduped, classified memories', () =
       assert.match(m, /^[A-Z`$]/, `"${m}" should not start lowercase`);
     }
   }
+});
+
+test('extract: resolution language creates resolved memories, not open bugs', () => {
+  const examples = [
+    'Fixed GUARDRAILS.md unclosed code fence.',
+    'Resolved the GUARDRAILS.md truncation issue.',
+    'Completed the guardrails document.',
+    'Fixed the incomplete GUARDRAILS.md file.',
+    'Closed the documentation bug about GUARDRAILS.md code fence.',
+    'Addressed the SETTINGS.md validation issue.',
+    'Repaired the CLI startup regression.',
+  ];
+
+  const signals = extractSignals(examples.join('\n'));
+  assert.deepEqual(signals.bugs, []);
+  assert.deepEqual(signals.todos, []);
+  assert.equal(signals.resolved.length, examples.length);
+  assert.match(signals.resolved[0], /Fixed GUARDRAILS\.md unclosed code fence/);
+  assert.match(signals.resolved[1], /Resolved the GUARDRAILS\.md truncation issue/);
+  assert.match(signals.resolved[5], /Addressed the SETTINGS\.md validation issue/);
+  assert.match(signals.resolved[6], /Repaired the CLI startup regression/);
+});
+
+test('resolution matching closes the guardrails code fence bug', () => {
+  const openBug = 'GUARDRAILS.md is incomplete/truncated: it ends with an unclosed code fence.';
+  const resolved = 'Fixed GUARDRAILS.md unclosed code fence.';
+
+  assert.equal(memoryResolvesItem(openBug, resolved), true);
+  assert.equal(memoryResolvesItem(openBug, 'Fixed unrelated Redis blacklist bug.'), false);
 });
 
 // --------------------------------------------------------------------------

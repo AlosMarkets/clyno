@@ -13,6 +13,7 @@ import {
   stripFrontmatter,
   repairMemoryText,
   isQualityMemory,
+  memoryResolvesItem,
   type MemoryType,
 } from './memory.js';
 
@@ -93,8 +94,17 @@ const FILE_TITLES: Record<string, string> = {
   todos: 'Open TODOs',
   bugs: 'Open Bugs',
   errors: 'Errors',
+  resolved: 'Recently Resolved',
   summaries: 'Summary',
 };
+
+interface InsightCounts {
+  decisions: number;
+  todos: number;
+  bugs: number;
+  errors: number;
+  resolved: number;
+}
 
 /**
  * Run a command through a real PTY, wiring it to the parent terminal so the
@@ -240,7 +250,7 @@ function finalizeSession(
 
   writeFileSync(sessionFile, sessionContent, 'utf8');
 
-  let counts = { decisions: 0, todos: 0, bugs: 0, errors: 0 };
+  let counts: InsightCounts = { decisions: 0, todos: 0, bugs: 0, errors: 0, resolved: 0 };
   if (!processedSessions.has(sessionFile)) {
     counts = extractInsights(sessionFile, { quiet: true });
     processedSessions.add(sessionFile);
@@ -251,7 +261,7 @@ function finalizeSession(
   process.stdout.write(
     `\n[clino] session saved → ${sessionFile}\n` +
       `[clino] learned ${counts.decisions} decisions, ${counts.todos} todos, ` +
-      `${counts.bugs} bugs, ${counts.errors} errors\n`,
+      `${counts.bugs} bugs, ${counts.errors} errors, ${counts.resolved} resolved\n`,
   );
 }
 
@@ -263,7 +273,7 @@ function finalizeSession(
 function extractInsights(
   sessionFilePath: string,
   opts: { quiet?: boolean } = {},
-): { decisions: number; todos: number; bugs: number; errors: number } {
+): InsightCounts {
   if (!opts.quiet) console.log('🔍 Extracting insights from session...');
 
   ensureClinoDirs();
@@ -274,6 +284,7 @@ function extractInsights(
   writeMemoryFile('todos.md', signals.todos, sessionFilePath);
   writeMemoryFile('bugs.md', signals.bugs, sessionFilePath);
   writeMemoryFile('errors.md', signals.errors, sessionFilePath);
+  writeMemoryFile('resolved.md', signals.resolved, sessionFilePath);
   writeSummaryFile('summaries.md', synthesizeSummary(signals), sessionFilePath);
 
   const counts = {
@@ -281,12 +292,13 @@ function extractInsights(
     todos: signals.todos.length,
     bugs: signals.bugs.length,
     errors: signals.errors.length,
+    resolved: signals.resolved.length,
   };
 
   if (!opts.quiet) {
     console.log(
       `✅ Extracted: ${counts.decisions} decisions, ${counts.todos} TODOs, ` +
-        `${counts.bugs} bugs, ${counts.errors} errors`,
+        `${counts.bugs} bugs, ${counts.errors} errors, ${counts.resolved} resolved`,
     );
   }
 
@@ -301,18 +313,25 @@ function extractInsights(
 function writeMemoryFile(filename: string, items: string[], source: string): void {
   const type = filename.replace('.md', '') as MemoryType;
   const filePath = join(MEMORY_DIR, filename);
+  if (items.length === 0) return;
 
-  const existing = existsSync(filePath)
-    ? parseMemoryItems(readFileSync(filePath, 'utf8'))
-        .map(repairMemoryText)
-        .filter((m) => isQualityMemory(m, type))
-    : [];
+  const existing = readStoredMemoryItems(filename, type);
 
   const merged = dedupeMemories([...items, ...existing]);
   if (merged.length === 0) return;
 
   const body = merged.map((m) => `- ${m}`).join('\n');
   writeFileSync(filePath, frontmatter(type, source) + body + '\n', 'utf8');
+}
+
+function readStoredMemoryItems(filename: string, type: MemoryType): string[] {
+  const filePath = join(MEMORY_DIR, filename);
+  if (!existsSync(filePath)) return [];
+  return dedupeMemories(
+    parseMemoryItems(readFileSync(filePath, 'utf8'))
+      .map(repairMemoryText)
+      .filter((m) => isQualityMemory(m, type)),
+  );
 }
 
 /**
@@ -452,21 +471,52 @@ function generateContext(query: string, maxChars = 3000): string {
     return context + `No relevant memories found for "${query}".\n`;
   }
 
+  const allResolvedItems = readStoredMemoryItems('resolved.md', 'resolved');
+  const matchedResolvedItems: string[] = [];
+  const suppressedByResolved: string[] = [];
+
   for (const result of results) {
     const key = result.file.replace('.md', '');
+    if (key === 'resolved') {
+      matchedResolvedItems.push(
+        ...result.matches
+          .map((m) => m.replace(/^[-*]\s+/, '').trim())
+          .map(repairMemoryText)
+          .filter((m) => isQualityMemory(m, 'resolved')),
+      );
+      continue;
+    }
+
     const title = FILE_TITLES[key] || key;
 
     // Re-apply the quality/dedupe layer at inject time (defense in depth).
-    const items = dedupeMemories(
+    let items = dedupeMemories(
       result.matches
         .map((m) => m.replace(/^[-*]\s+/, '').trim())
         .map(repairMemoryText)
         .filter((m) => key === 'summaries' || isQualityMemory(m, key as MemoryType)),
     );
+    if (key === 'bugs' || key === 'todos') {
+      items = items.filter((item) => {
+        const resolver = allResolvedItems.find((resolved) => memoryResolvesItem(item, resolved));
+        if (resolver) {
+          suppressedByResolved.push(resolver);
+          return false;
+        }
+        return true;
+      });
+    }
     if (items.length === 0) continue;
 
     context += `## ${title}\n`;
     context += items.map((i) => `- ${i}`).join('\n');
+    context += '\n\n';
+  }
+
+  const resolvedToShow = dedupeMemories([...matchedResolvedItems, ...suppressedByResolved]);
+  if (resolvedToShow.length > 0) {
+    context += `## ${FILE_TITLES.resolved}\n`;
+    context += resolvedToShow.map((i) => `- ${i}`).join('\n');
     context += '\n\n';
   }
 
@@ -569,6 +619,7 @@ function printStatus(): void {
     `- todos: ${countMemoryItems('todos.md')}`,
     `- bugs: ${countMemoryItems('bugs.md')}`,
     `- errors: ${countMemoryItems('errors.md')}`,
+    `- resolved: ${countMemoryItems('resolved.md')}`,
     `- summaries: ${countSummaries('summaries.md')}`,
     '',
     'Try:',
@@ -619,7 +670,9 @@ switch (command) {
     } else {
       console.log(`Found ${findResults.length} relevant memory files:\n`);
       findResults.forEach((result) => {
-        console.log(`📄 ${result.file}:`);
+        const key = result.file.replace('.md', '');
+        const label = key === 'resolved' ? `${result.file} (Resolved)` : result.file;
+        console.log(`📄 ${label}:`);
         result.matches.forEach((match, i) => {
           console.log(`  ${i + 1}. ${match.replace(/^[-*]\s+/, '')}`);
         });
@@ -631,6 +684,23 @@ switch (command) {
 
   case 'status': {
     printStatus();
+    break;
+  }
+
+  case 'resolve': {
+    if (!process.argv[3]) {
+      console.error('Usage: clino resolve <query>');
+      process.exit(1);
+    }
+    ensureClinoDirs();
+    const resolveQuery = process.argv.slice(3).join(' ');
+    const resolved = repairMemoryText(`Resolved ${resolveQuery}`);
+    if (!isQualityMemory(resolved, 'resolved')) {
+      console.error(`❌ Could not create a useful resolved memory for: "${resolveQuery}"`);
+      process.exit(1);
+    }
+    writeMemoryFile('resolved.md', [resolved], 'manual');
+    console.log(`Resolved memory recorded: ${resolved}`);
     break;
   }
 
@@ -662,6 +732,7 @@ Usage:
   clino summarize <file>        Extract insights from a session file
   clino find <query>            Search memory for relevant information
   clino inject <query> [--max-chars <number>]  Generate compact context for agent injection
+  clino resolve <query>         Record a resolved bug/TODO marker
   clino status                  Show storage location and a memory health summary
 
 Examples:
@@ -671,6 +742,7 @@ Examples:
   clino find "auth bug"
   clino inject "auth-system"
   clino inject "auth" --max-chars 6000
+  clino resolve "GUARDRAILS code fence"
   clino status
 `);
 }

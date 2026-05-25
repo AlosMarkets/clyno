@@ -9,13 +9,14 @@
  * Pipeline: split -> classify -> repair -> quality filter -> dedupe.
  */
 
-export type MemoryType = 'decisions' | 'todos' | 'bugs' | 'errors';
+export type MemoryType = 'decisions' | 'todos' | 'bugs' | 'errors' | 'resolved';
 
 export interface ExtractedSignals {
   decisions: string[];
   todos: string[];
   bugs: string[];
   errors: string[];
+  resolved: string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -561,9 +562,22 @@ function hasConcreteBugSignal(t: string): boolean {
   return false;
 }
 
+function hasResolutionSignal(t: string): boolean {
+  return [
+    /^(fixed|resolved|completed|closed|addressed|repaired)\b/,
+    /^(we|i|they)\s+(fixed|resolved|completed|closed|addressed|repaired)\b/,
+    /\b(has been|have been|was|were|is now|are now)\s+(fixed|resolved|completed|closed|addressed|repaired)\b/,
+    /\bclosed\s+the\s+.*\b(bug|todo|issue|problem)\b/,
+  ].some((re) => re.test(t));
+}
+
 /** Route a sentence to exactly one memory bucket (or null to drop it). */
 export function classifySentence(sentence: string): MemoryType | null {
   const t = sentence.toLowerCase();
+
+  if (hasResolutionSignal(t)) {
+    return 'resolved';
+  }
 
   if (
     /\b(error|exception)\b\s*:/.test(t) ||
@@ -609,7 +623,7 @@ export function classifySentence(sentence: string): MemoryType | null {
 export function extractSignals(content: string): ExtractedSignals {
   const cleaned = stripTranscriptMetadata(cleanTranscriptForExtraction(content));
   const sentences = splitCompoundSentences(splitIntoSentences(cleaned));
-  const buckets: ExtractedSignals = { decisions: [], todos: [], bugs: [], errors: [] };
+  const buckets: ExtractedSignals = { decisions: [], todos: [], bugs: [], errors: [], resolved: [] };
 
   for (const sentence of sentences) {
     if (isAgentProcessNarration(sentence)) continue;
@@ -624,7 +638,97 @@ export function extractSignals(content: string): ExtractedSignals {
   buckets.todos = dedupeMemories(buckets.todos);
   buckets.bugs = dedupeMemories(buckets.bugs);
   buckets.errors = dedupeMemories(buckets.errors);
+  buckets.resolved = dedupeMemories(buckets.resolved);
   return buckets;
+}
+
+// ---------------------------------------------------------------------------
+// Resolution matching
+// ---------------------------------------------------------------------------
+
+const RESOLUTION_MATCH_STOP = new Set([
+  ...STOPWORDS,
+  'fix', 'fixed', 'fixing', 'resolve', 'resolved', 'resolving',
+  'complete', 'completed', 'completing', 'close', 'closed', 'closing',
+  'address', 'addressed', 'addressing', 'repair', 'repaired', 'repairing',
+  'done', 'bug', 'bugs', 'todo', 'todos', 'issue', 'issues', 'problem',
+  'problems', 'file', 'files', 'about',
+]);
+
+function canonicalMatchToken(token: string): string {
+  if (/^truncat/.test(token)) return 'truncat';
+  if (/^fenc/.test(token)) return 'fence';
+  if (/^doc/.test(token)) return 'document';
+  return token.replace(/(?:ing|ed|s)$/i, '');
+}
+
+function matchTokens(text: string): Set<string> {
+  const tokens = new Set<string>();
+  const raw = normalizeMemoryText(text)
+    .replace(/[^a-z0-9_.\s-]/g, ' ')
+    .split(/\s+/)
+    .map((tok) => tok.replace(/^[.-]+|[.-]+$/g, '').trim())
+    .filter(Boolean);
+
+  for (const token of raw) {
+    const variants = [token];
+    const fileMatch = token.match(/^([a-z0-9_-]+)\.[a-z0-9]+$/i);
+    if (fileMatch) variants.push(fileMatch[1]);
+
+    for (const variant of variants) {
+      const canonical = canonicalMatchToken(variant);
+      if (canonical.length < 3 || RESOLUTION_MATCH_STOP.has(canonical)) continue;
+      tokens.add(canonical);
+    }
+  }
+
+  return tokens;
+}
+
+function referenceAnchors(text: string): Set<string> {
+  const anchors = new Set<string>();
+  for (const match of text.toLowerCase().matchAll(/\b([a-z0-9_-]+)\.[a-z0-9]+\b/g)) {
+    anchors.add(match[0]);
+    anchors.add(match[1]);
+  }
+  if (/\bguardrails\b/i.test(text)) anchors.add('guardrails');
+  if (/\breadme\b/i.test(text)) anchors.add('readme');
+  return anchors;
+}
+
+function hasDocumentationSignalForResolution(text: string): boolean {
+  return /\b(?:README|GUARDRAILS)\.md\b/i.test(text) ||
+    /\b(?:readme|guardrails|docs?|documentation|document|markdown|code\s+fence|fenced\s+block)\b/i.test(text);
+}
+
+function intersects(a: Set<string>, b: Set<string>): boolean {
+  for (const item of a) {
+    if (b.has(item)) return true;
+  }
+  return false;
+}
+
+/**
+ * Whether a resolved memory is close enough to suppress an older open bug/TODO.
+ * The matcher is intentionally conservative: it needs shared concrete tokens,
+ * a shared file/reference anchor, or a broad documentation completion signal.
+ */
+export function memoryResolvesItem(openItem: string, resolvedItem: string): boolean {
+  if (!hasResolutionSignal(resolvedItem.toLowerCase())) return false;
+
+  const openTokens = matchTokens(openItem);
+  const resolvedTokens = matchTokens(resolvedItem);
+  const shared = [...openTokens].filter((token) => resolvedTokens.has(token));
+  const sharedAnchors = intersects(referenceAnchors(openItem), referenceAnchors(resolvedItem));
+  const sharedCodeFence = shared.includes('code') && shared.includes('fence');
+
+  if (sharedAnchors && shared.length >= 2) return true;
+  if (shared.length >= 3) return true;
+  if (sharedCodeFence) return true;
+
+  return sharedAnchors &&
+    hasDocumentationSignalForResolution(openItem) &&
+    hasDocumentationSignalForResolution(resolvedItem);
 }
 
 // ---------------------------------------------------------------------------
@@ -634,8 +738,10 @@ export function extractSignals(content: string): ExtractedSignals {
 const TOPIC_STOP = new Set([
   ...STOPWORDS,
   'use', 'using', 'used', 'fix', 'fixing', 'fixed', 'add', 'adding', 'added',
-  'implement', 'implementing', 'handle', 'handling', 'update', 'updating',
-  'remove', 'removing', 'refactor', 'need', 'still', 'also', 'after', 'when',
+  'resolve', 'resolving', 'resolved', 'complete', 'completing', 'completed',
+  'close', 'closing', 'closed', 'address', 'addressing', 'addressed',
+  'repair', 'repairing', 'repaired', 'implement', 'implementing', 'handle', 'handling',
+  'update', 'updating', 'remove', 'removing', 'refactor', 'need', 'still', 'also', 'after', 'when',
   'while', 'unable', 'not', 'bug', 'bugs', 'error', 'errors', 'issue', 'issues',
   'problem', 'todo', 'fixme', 'specified', 'type', 'users', 'user', 'unable',
   'thing', 'things', 'stuff',
@@ -742,6 +848,7 @@ export function synthesizeSummary(signals: ExtractedSignals): string {
     ...signals.bugs,
     ...signals.todos,
     ...signals.errors,
+    ...signals.resolved,
   ];
   if (all.length === 0) return '';
 
@@ -751,6 +858,7 @@ export function synthesizeSummary(signals: ExtractedSignals): string {
   if (signals.bugs.length) counts.push(plural(signals.bugs.length, 'bug'));
   if (signals.todos.length) counts.push(plural(signals.todos.length, 'TODO'));
   if (signals.errors.length) counts.push(plural(signals.errors.length, 'error'));
+  if (signals.resolved.length) counts.push(plural(signals.resolved.length, 'resolved item'));
 
   const countsText =
     counts.length === 1
