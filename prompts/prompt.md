@@ -1,156 +1,123 @@
-Good. The inject command works, but the output shows memory duplication and weak classification.
+Dogfood revealed the next extraction bug: real Codex/Claude terminal transcripts contain ANSI/control-code noise and agent UI narration. Clino is extracting polluted memories.
 
-Fix the memory quality layer before adding any new features.
+Observed bad memory:
 
-Important: do not add GUI, embeddings, SQLite FTS, team sync, or Electron yet. This task is only about memory quality.
+summaries.md:
+"This session captured 1 decision, 1 bug and 1 TODO. Focus areas: 49m, 1mTip, 22m, 3mNew, 23m, Fast."
 
-## Goal
+todos.md:
+"- • I’ve got the main content; I’m doing one quick pass on the remaining lines to."
 
-Make injected context clean, deduplicated, correctly classified, and compact.
+bugs.md:
+"- Net: strong alignment and mostly clear docs, with one concrete quality issue."
 
-The current bad output repeats the same memory multiple times:
+These are not valid memories.
 
-"We decided to use JWT auth and need to fix Redis blacklist bug"
+Root issue:
+The raw transcript from real terminal agents includes:
+- ANSI escape sequences
+- RGB color control fragments
+- TUI chrome
+- model selector text
+- tips
+- timing fragments like 49m, 1m, 22m
+- agent narration like "I’ll read..." / "I’ve got..."
+- partial/incomplete lines from redraws
 
-This should not happen.
+Goal:
+Keep raw transcript unchanged, but clean/sanitize text before extraction.
 
----
+Requirements:
 
-## 1. Add deduplication in three places
+1. Add a transcript-cleaning function before extraction.
 
-Deduplicate at:
+Do not alter raw saved transcripts. Only use cleaned text for memory extraction.
 
-1. extraction time
-2. memory write time
-3. inject output time
+Function idea:
+cleanTranscriptForExtraction(raw: string): string
 
-Do not rely only on final-output dedupe.
+It should remove:
+- ANSI escape codes
+- OSC sequences like terminal color/title sequences
+- control characters
+- cursor movement sequences
+- alternate screen buffer sequences
+- box drawing UI chrome where practical
+- terminal RGB fragments like:
+  "10;rgb:ffff/ffff/ffff11;rgb:3c95/3c95/3c95"
+- Codex/Claude UI lines like:
+  "Tip: New Use /fast..."
+  "Select Model and Effort"
+  "Access legacy models..."
+  "Model changed to..."
+  "OpenAI Codex"
+  "directory:"
+  "model:"
+  "╭──"
+  "╰──"
 
-### Text normalization
+2. Add narration filters.
 
-Create a reusable function:
+Reject memory candidates that are just agent process narration, such as:
+- "I’ll read README..."
+- "I’ve got the main content..."
+- "I’m doing one quick pass..."
+- "I’ll inspect..."
+- "Let me check..."
+- "I can see..."
+- "Now I’ll..."
 
-normalizeMemoryText(text: string): string
+These are not project memories unless they contain a concrete decision/TODO/bug.
 
-It should:
+3. Improve bug classification.
 
-- lowercase
-- trim whitespace
-- collapse repeated spaces
-- remove repeated punctuation
-- remove markdown bullet prefixes
-- normalize quotes
-- remove trailing periods for comparison
-- preserve the original display text separately
+Do not classify review feedback as a bug just because it says "issue".
 
 Example:
+"Net: strong alignment and mostly clear docs, with one concrete quality issue."
+should not become a bug.
 
-Input:
-"- We decided to use JWT auth and need to fix Redis blacklist bug!!!"
+Bug memories should usually involve concrete broken behavior, error, failing command, regression, or explicit "bug: fix X".
 
-Normalized:
-"we decided to use jwt auth and need to fix redis blacklist bug"
+4. Improve focus area extraction.
 
-### Exact dedupe
+Reject numeric/time/control-code tokens:
+- 49m
+- 1mTip
+- 22m
+- 3mNew
+- 23m
+- Fast if it comes from UI tip text
 
-First dedupe by normalized text.
+Focus areas should come only from cleaned meaningful content.
 
-### Fuzzy dedupe
+5. Add regression tests using this exact bad content.
 
-Then add simple fuzzy dedupe.
+Inputs should include:
+- "10;rgb:ffff/ffff/ffff11;rgb:3c95/3c95/3c95"
+- "Tip: New Use /fast to enable our fastest inference..."
+- "Select Model and Effort"
+- "• I’ve got the main content; I’m doing one quick pass on the remaining lines to."
+- "Net: strong alignment and mostly clear docs, with one concrete quality issue."
 
-Use a similarity threshold of 0.85.
+Expected:
+- none of these become decisions/todos/bugs/errors
+- none of these appear as focus areas
 
-Acceptable simple options:
+6. Re-run extraction on the latest real session transcript if possible.
 
-- Dice coefficient
-- Jaccard similarity over words
-- Levenshtein ratio
+Expected:
+- no 49m/1mTip/22m focus areas
+- no agent narration as TODO
+- no generic "quality issue" feedback as bug
+- if the session reviewed README/GUARDRAILS, extracted memory should mention README, GUARDRAILS, documentation, docs, or guardrails if present in cleaned text
 
-Do not add a heavy dependency unless already present.
+7. Show proof:
+- cleaning function
+- filters added
+- tests added
+- npm test
+- npm run build
+- before/after memory output from the real transcript
 
-### Required behavior
-
-The same memory sentence must not appear multiple times in:
-
-- decisions.md
-- summaries.md
-- todos.md
-- bugs.md
-- `clino inject` output
-
----
-
-## 2. Improve classification and signal splitting
-
-The sentence:
-
-"We decided to use JWT auth and need to fix Redis blacklist bug"
-
-must split into separate memories:
-
-- decision: "Use JWT auth."
-- bug/todo: "Fix Redis blacklist bug."
-
-Do not store compound sentences as one memory if they contain multiple signals.
-
-### Required extraction behavior
-
-Detect conjunctions like:
-
-- "and need to"
-- "but need to"
-- "and still need to"
-- "but still need to"
-- "and we need to"
-- "but we need to"
-
-Then split the sentence into meaningful signals.
-
-### Classification rules
-
-Examples:
-
-"We decided to use JWT auth"
-→ decision: "Use JWT auth."
-
-"because it's stateless"
-→ reason attached to the decision if present.
-
-"need to fix Redis blacklist bug"
-→ bug/todo: "Fix Redis blacklist bug."
-
-"remaining: add unit tests for auth module"
-→ todo: "Add unit tests for auth module."
-
-"error: module type not specified"
-→ error: "Module type not specified."
-
----
-
-## 3. Improve memory formatting
-
-Each stored memory item should include metadata.
-
-Minimum metadata:
-
-- type
-- date
-- source session filename
-- confidence
-- tags if available
-
-Example memory item:
-
-```md
----
-type: decision
-date: 2026-05-24
-source: 2026-05-24-20-30-00.md
-confidence: 0.92
-tags:
-  - auth
-  - jwt
----
-
-Use JWT auth because it is stateless.
+Do not add embeddings, SQLite, GUI, cloud sync, or unrelated features.
