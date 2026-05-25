@@ -70,8 +70,112 @@ function isCommandLike(text: string): boolean {
 }
 
 // ---------------------------------------------------------------------------
-// Transcript metadata stripping
+// Transcript cleaning / metadata stripping
 // ---------------------------------------------------------------------------
+
+// Terminal transcripts captured from real TUIs contain redraw/control bytes that
+// are not project content. Keep the raw saved transcript intact, but remove this
+// noise before classification.
+function stripTerminalControlSequences(text: string): string {
+  let cleaned = text;
+
+  // OSC / DCS / APC / PM / SOS strings, including title and color queries.
+  cleaned = cleaned.replace(/\x1B\][\s\S]*?(?:\x07|\x1B\\)/g, '');
+  cleaned = cleaned.replace(/\x1B[P_^X][\s\S]*?(?:\x07|\x1B\\)/g, '');
+  // CSI cursor movement, erase, color, bracketed paste, alternate screen, etc.
+  cleaned = cleaned.replace(/\x1B\[[0-?]*[ -/]*[@-~]/g, '');
+  // Charset selection and any remaining one-byte ESC controls.
+  cleaned = cleaned.replace(/\x1B[()#%*+\-.\/][0-~]/g, '');
+  cleaned = cleaned.replace(/\x1B[@-Z\\-_]/g, '');
+  // Fragments left behind by terminal RGB color responses when escape framing is
+  // partial or interleaved with redraw output.
+  cleaned = cleaned.replace(
+    /(?:\d{1,2};)?rgb:[0-9a-f]{1,4}\/[0-9a-f]{1,4}\/[0-9a-f]{1,4}/gi,
+    '',
+  );
+  cleaned = cleaned.replace(/\]\d{1,2};\?/g, '');
+
+  return cleaned
+    .replace(/\r/g, '\n')
+    .replace(/\t/g, ' ')
+    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F]/g, '');
+}
+
+function normalizeTranscriptLine(line: string): string {
+  return line
+    .replace(/[╭╮╰╯┌┐└┘├┤┬┴┼╔╗╚╝╠╣╦╩╬]/g, ' ')
+    .replace(/[│║]/g, ' ')
+    .replace(/[─━═]{3,}/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function isTerminalUiLine(line: string): boolean {
+  const t = normalizeTranscriptLine(line)
+    .replace(/^[-*+•]\s*/, '')
+    .replace(/^›\s*/, '')
+    .trim();
+  if (!t) return true;
+  if (/^[\s╭╮╰╯│║─━═┌┐└┘├┤┬┴┼]+$/.test(line)) return true;
+
+  return [
+    /^openai codex\b/i,
+    /^model\s*:/i,
+    /^directory\s*:/i,
+    /^tip:\s*new\s+use\s+\/fast\b/i,
+    /^select model and effort\b/i,
+    /^access legacy models\b/i,
+    /^model changed to\b/i,
+    /^booting mcp server\b/i,
+    /^\(\d+s\s*•\s*esc to interrupt\)$/i,
+    /^implement\s+\{feature\}$/i,
+    /^explored$/i,
+    /^short assessment:$/i,
+    /^read\s+[\w./-]+(?:,\s*[\w./-]+)*$/i,
+    /^list\s+[\w./-]+$/i,
+    /^ran\s+\S+/i,
+    /^\/(?:model|fast|ide|permissions|keymap|vim|experimental|approve|memories|mention|mcp)\b/i,
+    /^gpt-[\w.-]+\s+\w+\s*(?:·\s*~?\/?.*)?$/i,
+  ].some((re) => re.test(t));
+}
+
+function shouldJoinWrappedLine(previous: string, line: string): boolean {
+  if (!previous || !line) return false;
+  if (/^```/.test(previous) || /^```/.test(line)) return false;
+  if (/^[-*+•]\s+/.test(line)) return false;
+  if (/^[#]{1,6}\s+/.test(line)) return false;
+  if (/[.!?]$/.test(previous)) return false;
+  if (/^(agent|command|arguments|args|started|ended|exit code)\s*:/i.test(line)) return false;
+
+  return /[,;:]$/.test(previous) || /^(and|but|or|so|because|which|that|in|on|of|to|for|with|the|it|fence|makes|guidance)\b/i.test(line);
+}
+
+function unwrapSoftWrappedLines(lines: string[]): string[] {
+  const unwrapped: string[] = [];
+  for (const line of lines) {
+    if (!line) {
+      unwrapped.push(line);
+      continue;
+    }
+
+    const last = unwrapped[unwrapped.length - 1];
+    if (shouldJoinWrappedLine(last, line)) {
+      unwrapped[unwrapped.length - 1] = `${last} ${line}`.replace(/\s+/g, ' ').trim();
+    } else {
+      unwrapped.push(line);
+    }
+  }
+  return unwrapped;
+}
+
+export function cleanTranscriptForExtraction(raw: string): string {
+  const lines = stripTerminalControlSequences(raw)
+    .split('\n')
+    .map(normalizeTranscriptLine)
+    .filter((line) => !isTerminalUiLine(line));
+
+  return unwrapSoftWrappedLines(lines).join('\n');
+}
 
 // Header labels Clino writes into every session transcript (see finalizeSession
 // in index.ts) plus their plain-text equivalents. They are scaffolding, never
@@ -131,26 +235,28 @@ export function stripTranscriptMetadata(content: string): string {
 // ---------------------------------------------------------------------------
 
 const CONTRACTIONS: Array<[RegExp, string]> = [
-  [/\bwe'll\b/gi, 'we will'],
-  [/\bi'll\b/gi, 'I will'],
-  [/\bit's\b/gi, 'it is'],
-  [/\bthat's\b/gi, 'that is'],
-  [/\bwe're\b/gi, 'we are'],
-  [/\bthey're\b/gi, 'they are'],
-  [/\bdon't\b/gi, 'do not'],
-  [/\bdoesn't\b/gi, 'does not'],
-  [/\bdidn't\b/gi, 'did not'],
-  [/\bcan't\b/gi, 'cannot'],
-  [/\bwon't\b/gi, 'will not'],
-  [/\bisn't\b/gi, 'is not'],
-  [/\baren't\b/gi, 'are not'],
+  [/\bwe['’]ll\b/gi, 'we will'],
+  [/\bi['’]ll\b/gi, 'I will'],
+  [/\bi['’]ve\b/gi, 'I have'],
+  [/\bi['’]m\b/gi, 'I am'],
+  [/\bit['’]s\b/gi, 'it is'],
+  [/\bthat['’]s\b/gi, 'that is'],
+  [/\bwe['’]re\b/gi, 'we are'],
+  [/\bthey['’]re\b/gi, 'they are'],
+  [/\bdon['’]t\b/gi, 'do not'],
+  [/\bdoesn['’]t\b/gi, 'does not'],
+  [/\bdidn['’]t\b/gi, 'did not'],
+  [/\bcan['’]t\b/gi, 'cannot'],
+  [/\bwon['’]t\b/gi, 'will not'],
+  [/\bisn['’]t\b/gi, 'is not'],
+  [/\baren['’]t\b/gi, 'are not'],
 ];
 
 // Lead-in phrases stripped from the FRONT of a fragment. These are the
 // conversational scaffolding ("we decided to", "need to", "to ", labels) — never
 // the action verb itself (use / fix / add / implement stay put).
 const LEAD_INS: RegExp[] = [
-  /^[-*+]\s+/,
+  /^[-*+•]\s+/,
   // label prefixes: "decision:", "todo:", "remaining:", "bug:", "error:" ...
   /^(decisions?|todos?|fixme|bugs?|issues?|problems?|errors?|exception|remaining|notes?|plans?)\s*:\s*/i,
   // decision lead-ins: "we decided to", "decided to", "chose to", "we agreed to"
@@ -178,11 +284,12 @@ const LEAD_INS: RegExp[] = [
  */
 export function repairMemoryText(raw: string): string {
   if (!raw) return '';
-  let t = raw.replace(/\r/g, '').replace(/\s+/g, ' ').trim();
+  let t = cleanTranscriptForExtraction(raw).replace(/\r/g, '').replace(/\s+/g, ' ').trim();
+  if (!t || isTerminalUiLine(t)) return '';
   // Drop a transcript-metadata label ("**Arguments:**", "Command:", …) if the
   // fragment slipped through with one attached, then keep repairing the content.
   t = stripMetadataPrefix(t);
-  t = t.replace(/^[-*+]\s+/, '');
+  t = t.replace(/^[-*+•]\s+/, '');
   t = t.replace(/^["'`]+/, '').replace(/["'`]+$/, '').trim();
 
   // Expand contractions ("it's" -> "it is", etc.) before anything else.
@@ -254,8 +361,10 @@ function countMeaningfulWords(text: string): number {
  */
 export function isQualityMemory(text: string, type: MemoryType): boolean {
   if (!text) return false;
-  const core = text.trim().replace(/^[-*+]\s+/, '').replace(/[.!?]+$/, '').trim();
+  const core = text.trim().replace(/^[-*+•]\s+/, '').replace(/[.!?]+$/, '').trim();
   if (!core) return false;
+  if (isTerminalUiLine(core) || isAgentProcessNarration(core)) return false;
+  if (type === 'bugs' && !hasConcreteBugSignal(core.toLowerCase())) return false;
 
   // Forbidden starts (defense in depth — repair should already remove these).
   if (/^(to\s+use|decided\s+to\s+use|we\s+decided\s+to\s+use|to\s+)/i.test(core)) {
@@ -412,6 +521,46 @@ export function splitCompoundSentences(sentences: string[]): string[] {
   return result;
 }
 
+function plainCandidateText(sentence: string): string {
+  return normalizeTranscriptLine(stripTerminalControlSequences(sentence))
+    .replace(/^[-*+•]\s*/, '')
+    .trim();
+}
+
+function isAgentProcessNarration(sentence: string): boolean {
+  const t = plainCandidateText(sentence).toLowerCase();
+  if (!t) return false;
+
+  return [
+    /^(i['’]?ll|i will)\s+(read|inspect|check|look|review|scan|open|run|do|give)\b/,
+    /^now\s+(i['’]?ll|i will)\s+(read|inspect|check|look|review|scan|open|run|do|give)\b/,
+    /^(i['’]?ve|i have)\s+got\b/,
+    /^(i['’]?m|i am)\s+(doing|checking|reading|inspecting|looking|running|making|going)\b/,
+    /^let me\s+(check|inspect|look|read|open|run)\b/,
+    /^i can see\b/,
+    /^i found\b/,
+  ].some((re) => re.test(t));
+}
+
+function hasConcreteBugSignal(t: string): boolean {
+  if (/\bbugs?\b/.test(t) || /^(bugs?)\s*:/.test(t)) return true;
+  if (
+    /\b(regression|broken|breakage|crash(?:es|ed|ing)?|hang(?:s|ed|ing)?|failing|failure|fails?\b|throws?|leak|corrupt|invalid|unclosed|truncated|incomplete|not working)\b/.test(t)
+  ) {
+    return true;
+  }
+  if (/\bdoes not\b.*\b(work|load|run|compile|build|pass|save|write|read|render)\b/.test(t)) {
+    return true;
+  }
+  if (/\bfix(?:e[sd])?\b.*\b(bug|error|regression|failure|crash|broken|failing|unclosed|truncated|incomplete)\b/.test(t)) {
+    return true;
+  }
+  if (/^(issue|problem)\s*:\s*.*\b(fails?|failed|broken|error|exception|bug|regression|crash|truncated|unclosed|incomplete)\b/.test(t)) {
+    return true;
+  }
+  return false;
+}
+
 /** Route a sentence to exactly one memory bucket (or null to drop it). */
 export function classifySentence(sentence: string): MemoryType | null {
   const t = sentence.toLowerCase();
@@ -426,12 +575,7 @@ export function classifySentence(sentence: string): MemoryType | null {
     return 'errors';
   }
 
-  if (
-    /\bbug\b/.test(t) ||
-    /^(bug|issue|problem)\s*:/.test(t) ||
-    /\b(issue|problem)\b/.test(t) ||
-    /\bfix\b/.test(t)
-  ) {
+  if (hasConcreteBugSignal(t)) {
     return 'bugs';
   }
 
@@ -449,7 +593,7 @@ export function classifySentence(sentence: string): MemoryType | null {
     /^(todo|fixme|remaining)\s*:/.test(t) ||
     /\b(need|want|plan|ought)\s+to\b/.test(t) ||
     /\bremaining\b/.test(t) ||
-    /^(add|implement|update|refactor|remove)\b/.test(t)
+    /^(add|implement|update|refactor|remove|fix)\b/.test(t)
   ) {
     return 'todos';
   }
@@ -463,11 +607,12 @@ export function classifySentence(sentence: string): MemoryType | null {
  * low-quality ever reaches storage or injection.
  */
 export function extractSignals(content: string): ExtractedSignals {
-  const cleaned = stripTranscriptMetadata(content);
+  const cleaned = stripTranscriptMetadata(cleanTranscriptForExtraction(content));
   const sentences = splitCompoundSentences(splitIntoSentences(cleaned));
   const buckets: ExtractedSignals = { decisions: [], todos: [], bugs: [], errors: [] };
 
   for (const sentence of sentences) {
+    if (isAgentProcessNarration(sentence)) continue;
     const category = classifySentence(sentence);
     if (!category) continue;
     const repaired = repairMemoryText(sentence);
@@ -494,20 +639,87 @@ const TOPIC_STOP = new Set([
   'while', 'unable', 'not', 'bug', 'bugs', 'error', 'errors', 'issue', 'issues',
   'problem', 'todo', 'fixme', 'specified', 'type', 'users', 'user', 'unable',
   'thing', 'things', 'stuff',
+  // Generic review adjectives/nouns are weak focus areas; prefer concrete
+  // files, domains, and phrases instead.
+  'directionally', 'strong', 'aligned', 'same', 'boundaries', 'clear', 'mostly',
+  'concrete', 'quality', 'useful', 'good', 'bad', 'important', 'relevant',
+  'appears', 'appear', 'line', 'lines', 'closing', 'sections', 'section',
+  'clarity', 'truth', 'unfinished',
   // Transcript-metadata words and generic extraction verbs must never surface as
   // focus areas (e.g. "Arguments", "decided", "project", "local").
   'agent', 'command', 'arguments', 'args', 'exit', 'started', 'ended',
   'decided', 'decide', 'chose', 'choose', 'agreed', 'opted', 'project', 'local',
   'want', 'plan', 'ought',
+  // TUI/menu words from Codex/Claude chrome.
+  'tip', 'new', 'fast', 'select', 'model', 'effort', 'openai', 'codex',
+  'directory', 'legacy', 'models',
 ]);
+
+function isJunkTopicToken(word: string): boolean {
+  return /^\d/.test(word) || /^\d+[smhd](?:[a-z]+)?$/i.test(word) || /^rgb$/i.test(word);
+}
+
+function topicKey(topic: string): string {
+  return topic.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
+function addTopic(topic: string, seen: Set<string>, topics: string[], limit: number): boolean {
+  const clean = topic.replace(/\s+/g, ' ').trim();
+  if (!clean) return topics.length >= limit;
+
+  const key = topicKey(clean);
+  if (!key || seen.has(key)) return topics.length >= limit;
+
+  seen.add(key);
+  for (const part of key.split(/\s+/)) seen.add(part);
+  topics.push(clean);
+  return topics.length >= limit;
+}
+
+function hasDocsSignal(text: string): boolean {
+  return /\b(?:README|GUARDRAILS)\.md\b/i.test(text) ||
+    /\b(?:docs?|documentation|markdown|code\s+fence|fenced\s+block)\b/i.test(text);
+}
 
 function extractTopics(texts: string[], limit = 6): string[] {
   const seen = new Set<string>();
   const topics: string[] = [];
+
+  for (const text of texts) {
+    for (const match of text.matchAll(/\b[A-Za-z0-9_-]+\.md\b/g)) {
+      if (addTopic(match[0], seen, topics, limit)) return topics;
+    }
+
+    if (/\bproject guardrails\b/i.test(text) && addTopic('project guardrails', seen, topics, limit)) {
+      return topics;
+    }
+    if (/\b(?:unclosed\s+)?code\s+fence\b/i.test(text) && addTopic('code fence', seen, topics, limit)) {
+      return topics;
+    }
+    if (/\bmemory extraction\b/i.test(text) && addTopic('memory extraction', seen, topics, limit)) {
+      return topics;
+    }
+    if (/\bmarkdown\b/i.test(text) && addTopic('markdown', seen, topics, limit)) {
+      return topics;
+    }
+    if (/\bpty\b/i.test(text) && addTopic('PTY', seen, topics, limit)) {
+      return topics;
+    }
+    if (/\bstorage\b/i.test(text) && addTopic('storage', seen, topics, limit)) {
+      return topics;
+    }
+    if (hasDocsSignal(text) && addTopic('documentation', seen, topics, limit)) {
+      return topics;
+    }
+  }
+
+  if (topics.length >= 3) return topics;
+
   for (const text of texts) {
     const words = text.replace(/[^A-Za-z0-9\s]/g, ' ').split(/\s+/).filter(Boolean);
     for (const w of words) {
       const lw = w.toLowerCase();
+      if (isJunkTopicToken(w)) continue;
       if (lw.length < 3 || TOPIC_STOP.has(lw) || seen.has(lw)) continue;
       seen.add(lw);
       // Capitalize for readability ("clino" -> "Clino"); already-uppercase

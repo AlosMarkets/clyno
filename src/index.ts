@@ -16,6 +16,15 @@ import {
   type MemoryType,
 } from './memory.js';
 
+function isGitMarker(path: string): boolean {
+  if (!existsSync(path)) return false;
+  try {
+    return readFileSync(path, 'utf8').startsWith('gitdir:');
+  } catch {
+    return existsSync(join(path, 'HEAD'));
+  }
+}
+
 /**
  * Walk up from `start` looking for a `.git` entry (a directory for a normal
  * checkout, a file for a worktree/submodule). Returns the repository root, or
@@ -26,7 +35,7 @@ function findGitRoot(start: string): string | null {
   let dir = start;
   // eslint-disable-next-line no-constant-condition
   while (true) {
-    if (existsSync(join(dir, '.git'))) return dir;
+    if (isGitMarker(join(dir, '.git'))) return dir;
     const parent = dirname(dir);
     if (parent === dir) return null; // reached the filesystem root
     dir = parent;
@@ -321,6 +330,69 @@ function frontmatter(type: string, source: string): string {
   return `---\ntype: ${type}\ndate: ${date}\nsource: ${source}\n---\n\n`;
 }
 
+const QUERY_ALIASES: Record<string, string[]> = {
+  documentation: [
+    'documentation',
+    'docs',
+    'README',
+    'README.md',
+    'GUARDRAILS',
+    'GUARDRAILS.md',
+    'markdown',
+  ],
+  docs: [
+    'documentation',
+    'docs',
+    'README',
+    'README.md',
+    'GUARDRAILS',
+    'GUARDRAILS.md',
+    'markdown',
+  ],
+  guardrails: [
+    'guardrails',
+    'GUARDRAILS.md',
+    'documentation',
+    'project guardrails',
+  ],
+  readme: [
+    'readme',
+    'README.md',
+    'documentation',
+    'docs',
+  ],
+  'code fence': [
+    'code fence',
+    'unclosed code fence',
+    'markdown',
+    'fenced block',
+  ],
+};
+
+function normalizeSearchTerm(term: string): string {
+  return term.toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
+function uniqueTerms(terms: string[]): string[] {
+  const seen = new Set<string>();
+  const unique: string[] = [];
+  for (const term of terms.map(normalizeSearchTerm).filter(Boolean)) {
+    if (seen.has(term)) continue;
+    seen.add(term);
+    unique.push(term);
+  }
+  return unique;
+}
+
+function expandSearchQuery(query: string): { directTerms: string[]; allTerms: string[] } {
+  const normalized = normalizeSearchTerm(query);
+  const aliases = QUERY_ALIASES[normalized] ?? [];
+  return {
+    directTerms: uniqueTerms([query]),
+    allTerms: uniqueTerms([query, ...aliases]),
+  };
+}
+
 /**
  * Search memory files. Frontmatter and headings are ignored so keyword tags and
  * metadata never surface as results.
@@ -328,8 +400,11 @@ function frontmatter(type: string, source: string): string {
 function searchMemory(query: string): Array<{ file: string; matches: string[] }> {
   console.log(`🔍 Searching memory for: "${query}"`);
 
-  const q = query.toLowerCase();
+  const { directTerms, allTerms } = expandSearchQuery(query);
+  const normalizedQuery = normalizeSearchTerm(query);
+  const preferDirectMatches = normalizedQuery === 'readme' || normalizedQuery === 'readme.md';
   const results: Array<{ file: string; matches: string[] }> = [];
+  const aliasResults: Array<{ file: string; matches: string[]; directMatches: string[] }> = [];
 
   if (!existsSync(MEMORY_DIR)) return results; // nothing captured yet
 
@@ -341,9 +416,25 @@ function searchMemory(query: string): Array<{ file: string; matches: string[] }>
       .map((l) => l.trim())
       .filter((l) => l && !l.startsWith('#'));
 
-    const matches = lines.filter((l) => l.toLowerCase().includes(q));
-    if (matches.length > 0) results.push({ file, matches: matches.slice(0, 8) });
+    const matches = lines.filter((l) => {
+      const lower = l.toLowerCase();
+      return allTerms.some((term) => lower.includes(term));
+    });
+    const directMatches = matches.filter((l) => {
+      const lower = l.toLowerCase();
+      return directTerms.some((term) => lower.includes(term));
+    });
+
+    if (matches.length > 0) {
+      aliasResults.push({ file, matches, directMatches });
+    }
   });
+
+  const hasDirectMatches = aliasResults.some((result) => result.directMatches.length > 0);
+  for (const result of aliasResults) {
+    const matches = preferDirectMatches && hasDirectMatches ? result.directMatches : result.matches;
+    if (matches.length > 0) results.push({ file: result.file, matches: matches.slice(0, 8) });
+  }
 
   return results;
 }

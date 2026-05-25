@@ -39,11 +39,17 @@ function clino(args, { cwd, clinoHome } = {}) {
 
 const tmp = (prefix) => mkdtempSync(join(tmpdir(), prefix));
 
+function markGitRoot(dir) {
+  const gitDir = join(dir, '.git');
+  mkdirSync(gitDir, { recursive: true });
+  writeFileSync(join(gitDir, 'HEAD'), 'ref: refs/heads/main\n');
+}
+
 test('CLINO_HOME is used exactly, ignoring git root and cwd', () => {
   const home = tmp('clino-home-');
   const work = tmp('clino-work-');
   // Make the cwd a git repo too, to prove CLINO_HOME wins over both fallbacks.
-  mkdirSync(join(work, '.git'), { recursive: true });
+  markGitRoot(work);
   try {
     const { code } = clino(['run', 'echo', 'override-test'], { cwd: work, clinoHome: home });
     assert.equal(code, 0);
@@ -59,7 +65,7 @@ test('CLINO_HOME is used exactly, ignoring git root and cwd', () => {
 test('inside a git repo, state resolves to <git-root>/.clino (not the nested cwd)', () => {
   const root = tmp('clino-gitroot-');
   const nested = join(root, 'packages', 'app');
-  mkdirSync(join(root, '.git'), { recursive: true }); // mark the repo root
+  markGitRoot(root); // mark the repo root
   mkdirSync(nested, { recursive: true });
   try {
     const { code } = clino(['run', 'echo', 'git-root-test'], { cwd: nested });
@@ -177,7 +183,7 @@ test('status: reflects the CLINO_HOME override', () => {
   const home = tmp('clino-status-home-');
   const work = tmp('clino-status-work-');
   // A git repo in cwd proves Git-repo detection is independent of the override.
-  mkdirSync(join(work, '.git'), { recursive: true });
+  markGitRoot(work);
   try {
     const { code, stdout } = clino(['status'], { cwd: work, clinoHome: home });
     assert.equal(code ?? 0, 0);
@@ -195,11 +201,11 @@ test('status: reflects the CLINO_HOME override', () => {
 test('status: detects whether .clino is git-ignored', () => {
   // Ignored: a repo whose .gitignore lists `.clino/`.
   const ignoredRepo = tmp('clino-status-ign-');
-  mkdirSync(join(ignoredRepo, '.git'), { recursive: true });
+  markGitRoot(ignoredRepo);
   writeFileSync(join(ignoredRepo, '.gitignore'), 'node_modules/\n.clino/\n');
   // Not ignored: a repo whose .gitignore does not mention `.clino`.
   const trackedRepo = tmp('clino-status-trk-');
-  mkdirSync(join(trackedRepo, '.git'), { recursive: true });
+  markGitRoot(trackedRepo);
   writeFileSync(join(trackedRepo, '.gitignore'), 'node_modules/\n');
   try {
     const ignored = clino(['status'], { cwd: ignoredRepo });
@@ -239,5 +245,59 @@ test('find and inject read from the same resolved home', () => {
   } finally {
     rmSync(work, { recursive: true, force: true });
     rmSync(other, { recursive: true, force: true });
+  }
+});
+
+test('find and inject use lightweight documentation aliases', () => {
+  const work = tmp('clino-alias-');
+  const memDir = join(work, '.clino', 'memory');
+  mkdirSync(memDir, { recursive: true });
+  const guardrailsMemory =
+    'GUARDRAILS.md is directionally strong and aligned with the same boundaries, ' +
+    'but it appears incomplete/truncated: it ends at line 79 with an unclosed code fence and no closing sections.';
+  writeFileSync(
+    join(memDir, 'bugs.md'),
+    '---\ntype: bugs\ndate: 2026-05-25\nsource: test.md\n---\n\n' +
+      `- ${guardrailsMemory}\n`,
+  );
+  try {
+    const documentation = clino(['find', 'documentation'], { cwd: work });
+    assert.match(documentation.stdout, /GUARDRAILS\.md/, 'documentation alias finds guardrails memory');
+    assert.match(documentation.stdout, /unclosed code fence/);
+
+    const injected = clino(['inject', 'documentation'], { cwd: work });
+    assert.match(injected.stdout, /GUARDRAILS\.md/, 'inject uses the same documentation alias');
+    assert.match(injected.stdout, /unclosed code fence/);
+
+    const codeFence = clino(['find', 'code fence'], { cwd: work });
+    assert.match(codeFence.stdout, /GUARDRAILS\.md/, 'code fence query finds guardrails memory');
+
+    const guardrails = clino(['find', 'guardrails'], { cwd: work });
+    assert.match(guardrails.stdout, /GUARDRAILS\.md/, 'guardrails query finds guardrails memory');
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+});
+
+test('README search prefers direct README memories over broader docs aliases', () => {
+  const work = tmp('clino-readme-alias-');
+  const memDir = join(work, '.clino', 'memory');
+  mkdirSync(memDir, { recursive: true });
+  writeFileSync(
+    join(memDir, 'decisions.md'),
+    '---\ntype: decisions\ndate: 2026-05-25\nsource: test.md\n---\n\n' +
+      '- README.md documents JWT setup.\n',
+  );
+  writeFileSync(
+    join(memDir, 'bugs.md'),
+    '---\ntype: bugs\ndate: 2026-05-25\nsource: test.md\n---\n\n' +
+      '- GUARDRAILS.md documentation has an unclosed code fence.\n',
+  );
+  try {
+    const found = clino(['find', 'README'], { cwd: work });
+    assert.match(found.stdout, /README\.md documents JWT setup/);
+    assert.doesNotMatch(found.stdout, /GUARDRAILS\.md documentation/);
+  } finally {
+    rmSync(work, { recursive: true, force: true });
   }
 });

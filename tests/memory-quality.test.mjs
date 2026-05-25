@@ -9,6 +9,7 @@ import {
   synthesizeSummary,
   parseMemoryItems,
   stripMetadataPrefix,
+  cleanTranscriptForExtraction,
 } from '../dist/memory.js';
 
 // --------------------------------------------------------------------------
@@ -248,4 +249,79 @@ test('dogfood: focus areas exclude metadata/junk words', () => {
   // Meaningful terms survive.
   assert.match(summary, /Clino/);
   assert.match(summary, /storage/i);
+});
+
+// --------------------------------------------------------------------------
+// 8. Dogfood regression: terminal UI/control-code noise must not become memory
+// --------------------------------------------------------------------------
+test('cleaning: strips ANSI/control noise and Codex UI chrome before extraction', () => {
+  const dirty = [
+    '10;rgb:ffff/ffff/ffff11;rgb:3c95/3c95/3c95',
+    '\x1b[39;49m\x1b[K Tip: New Use /fast to enable our fastest inference with increased plan usage.\x1b[0m',
+    'Select Model and Effort',
+    'Access legacy models by running codex -m <model_name> or in your config.toml',
+    'OpenAI Codex',
+    'model: gpt-5.5 xhigh',
+    'directory: ~/Desktop/clino',
+    '╭───────────────────────────────────────╮',
+    '╰───────────────────────────────────────╯',
+  ].join('\n');
+
+  const cleaned = cleanTranscriptForExtraction(dirty);
+  assert.equal(cleaned.trim(), '');
+});
+
+test('dogfood: exact bad transcript snippets produce no memories or focus areas', () => {
+  const bad = [
+    '10;rgb:ffff/ffff/ffff11;rgb:3c95/3c95/3c95',
+    'Tip: New Use /fast to enable our fastest inference with increased plan usage.',
+    'Select Model and Effort',
+    '• I’ve got the main content; I’m doing one quick pass on the remaining lines to.',
+    'Net: strong alignment and mostly clear docs, with one concrete quality issue.',
+  ].join('\n');
+
+  const signals = extractSignals(bad);
+  assert.deepEqual(signals.decisions, []);
+  assert.deepEqual(signals.todos, []);
+  assert.deepEqual(signals.bugs, []);
+  assert.deepEqual(signals.errors, []);
+
+  const summary = synthesizeSummary(signals);
+  for (const junk of ['49m', '1mTip', '22m', '3mNew', '23m', 'Fast', 'quality issue']) {
+    assert.doesNotMatch(summary, new RegExp(junk, 'i'));
+  }
+});
+
+test('classification: rejects process narration but keeps concrete project bugs', () => {
+  assert.deepEqual(extractSignals('I’ll read README.md and GUARDRAILS.md directly.').todos, []);
+  assert.deepEqual(
+    extractSignals('I’ve got the main content; I’m doing one quick pass on the remaining lines to.').todos,
+    [],
+  );
+  assert.deepEqual(
+    extractSignals('Net: strong alignment and mostly clear docs, with one concrete quality issue.').bugs,
+    [],
+  );
+  assert.deepEqual(extractSignals('I’ll fix Redis blacklist bug.').bugs, [
+    'Fix Redis blacklist bug.',
+  ]);
+
+  const signals = extractSignals(
+    [
+      'GUARDRAILS.md is directionally strong and aligned with the same boundaries,',
+      'but it appears incomplete/truncated: it ends at line 79 with an unclosed code',
+      'fence and no closing sections (see GUARDRAILS.md:73). That hurts clarity and',
+      'makes it feel unfinished as a source of truth.',
+    ].join('\n'),
+  );
+  assert.equal(signals.bugs.length, 1);
+  assert.match(signals.bugs[0], /GUARDRAILS\.md/);
+  assert.match(signals.bugs[0], /unclosed code fence/);
+
+  const summary = synthesizeSummary(signals);
+  for (const weak of ['directionally', 'strong', 'aligned', 'same', 'boundaries']) {
+    assert.doesNotMatch(summary, new RegExp(`\\b${weak}\\b`, 'i'));
+  }
+  assert.match(summary, /GUARDRAILS\.md/);
+  assert.match(summary, /code fence|documentation/i);
 });
