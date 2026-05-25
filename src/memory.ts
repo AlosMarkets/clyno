@@ -139,6 +139,25 @@ function isTerminalUiLine(line: string): boolean {
     /^gpt-[\w.-]+\s+\w+\s*(?:·\s*~?\/?.*)?$/i,
     /^find and fix a bug\b/i,
     /@filename\b/i,
+    // Claude Code skills/help/login/menu chrome.
+    /^use whnbuilding\b/i,
+    /^use when (?:building|configuring|deploying|promoting|asked)\b/i,
+    /^use the url below to sign in\b/i,
+    /^update-?config\b/i,
+    /^add-?dir\b/i,
+    /^add-?di\b/i,
+    /^\/(?:login|code-review)\b/i,
+    /^please run \/login\b/i,
+    /^remote control failed\b/i,
+    /^●\s*remote control failed\b/i,
+    /^api error:\s*401\b/i,
+    /^invalid authentication credentials\b/i,
+    /\buse this skill to configure the claue? code\b/i,
+    /\badd a new working directory\b/i,
+    /\befies bugs in your branch\b/i,
+    /\bidentifies bugs in your branch\b/i,
+    /\bfind and fix bugs in your branch\b/i,
+    /\breview the current diff for correctness bugs\b/i,
   ].some((re) => re.test(t));
 }
 
@@ -327,24 +346,101 @@ export function isCodexAuthNoise(text: string): boolean {
   return CODEX_AUTH_REJECT_COMPACT_PATTERNS.some((p) => compact.includes(p));
 }
 
+// ---------------------------------------------------------------------------
+// Claude Code intro / login / skills / menu blob rejection
+//
+// Claude Code limit/login/help/skills UI arrives as compacted TUI blobs (missing
+// whitespace, typos like "Claue Code", "Efies bugs"). Match on compact form and
+// drop wholesale before extraction — same strategy as Codex chrome filtering.
+// ---------------------------------------------------------------------------
+
+const CLAUDE_UI_COMPACT_PATTERNS = [
+  'usewhenbuildingmultiplatformchatbots',
+  'usewhnbuildingmultiplatform',
+  'whnbuildingmultiplatform',
+  'usewhenconfiguringmodelrouting',
+  'usewhendeployingpromoting',
+  'usewhendeploying',
+  'usewhenpromoting',
+  'usewhenaskedtorun',
+  'usetheurlbelowtosignin',
+  'updateconfigusethisskill',
+  'usethisskilltoconfiguretheclauecode',
+  'usethisskilltoconfiguretheclaudecode',
+  'adddiraddanewworkingdirectory',
+  'addadiranewworkingdirectory',
+  'adddiadanewworkingdirectory',
+  'addianewworkingdirectory',
+  'efiesbugsinyourbranch',
+  'codereviewreviewthecurrentdiff',
+  'codereviewreviwthcurrentdiff',
+  'reviewthecurrentdiffforcorrectnessbugs',
+  'reviwthcurrentdiffforcorrectnessbugs',
+  'remotecontrolfailed',
+  'remotecontrolfailedtoconnect',
+  'pleaserunlogin',
+  'apierror401invalidauthenticationcredentials',
+  'invalidauthenticationcredentials',
+  'slashcommands',
+  'multiplatformchatbots',
+];
+
+const CLAUDE_AUTH_REJECT_COMPACT_PATTERNS = [
+  'usetheurlbelowtosignin',
+  'usetheurlbelow',
+  'pleaserunlogin',
+  'remotecontrolfailed',
+  'remotecontrolfailedtoconnect',
+  'apierror401',
+  'invalidauthenticationcredentials',
+  'authenticationcredentials',
+  'finishsigningin',
+  'signinwith',
+];
+
+function isClaudeIntroChunk(line: string): boolean {
+  const compact = compactForUiMatch(line);
+  if (!compact) return false;
+  if (CLAUDE_UI_COMPACT_PATTERNS.some((p) => compact.includes(p))) return true;
+  if (CLAUDE_AUTH_REJECT_COMPACT_PATTERNS.some((p) => compact.includes(p))) return true;
+  if (isHighSymbolNoise(line) && /(claude|claue|remotecontrol|slashcommand|usetheurl)/.test(compact)) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Hard rejection for memory candidates: Claude login/auth/session UI is never
+ * stored as project memory (including as errors).
+ */
+export function isClaudeAuthNoise(text: string): boolean {
+  const compact = compactForUiMatch(text);
+  if (!compact) return false;
+  return CLAUDE_AUTH_REJECT_COMPACT_PATTERNS.some((p) => compact.includes(p));
+}
+
 export function cleanTranscriptForExtraction(raw: string): string {
   // Redact auth URLs before splitting so an embedded/compacted URL is removed in
   // full, then drop terminal-UI lines and whole Codex intro/login/auth blobs.
   // Drop diff/code-noise, Clino-output, and session/status lines BEFORE unwrapping
   // so a patch line (which often ends in ";" or ",") can never be soft-joined onto
   // the prose line below it, and so spec headings reach the block pass intact.
-  const lines = redactAuthUrls(redactCodexTaskChrome(stripTerminalControlSequences(raw)))
+  const lines = redactAuthUrls(
+    redactClaudeTaskChrome(redactCodexTaskChrome(stripTerminalControlSequences(raw))),
+  )
     .split('\n')
     .map(normalizeTranscriptLine)
     .filter(
       (line) =>
         !isTerminalUiLine(line) &&
         !isCodexIntroChunk(line) &&
+        !isClaudeIntroChunk(line) &&
         !isDiffOrCodeNoise(line) &&
         !isClinoOutputNoise(line) &&
         !isPromptSpecDirective(line) &&
         !isPromptRequestDirective(line) &&
         !isCodexTaskChrome(line) &&
+        !isClaudeTaskChrome(line) &&
         !isSessionStatusNoise(line),
     );
 
@@ -355,11 +451,13 @@ export function cleanTranscriptForExtraction(raw: string): string {
     (line) =>
       !isTerminalUiLine(line) &&
       !isCodexIntroChunk(line) &&
+      !isClaudeIntroChunk(line) &&
       !isDiffOrCodeNoise(line) &&
       !isClinoOutputNoise(line) &&
       !isPromptSpecDirective(line) &&
       !isPromptRequestDirective(line) &&
       !isCodexTaskChrome(line) &&
+      !isClaudeTaskChrome(line) &&
       !isSessionStatusNoise(line),
   );
 
@@ -573,10 +671,13 @@ export function isClinoOutputNoise(text: string): boolean {
   // Explicit bug reports naming clino behavior are memory, not pasted CLI output.
   if (/^bug:\s+/i.test(t)) return false;
   if (
-    /\b(writes?\s+memory\s+before|shows?\s+.+\s+(?:issue|as\s+open)|shows?\s+resolved\s+\S+\s+issue)\b/i.test(t)
+    /\b(writes?\s+memory\s+before|shows?\s+.+\s+(?:issue|as\s+open)|shows?\s+resolved\s+\S+\s+issue)\b/i.test(
+      t,
+    )
   ) {
     return false;
   }
+  if (/\baccepts\b.*\bas memory\b/i.test(t)) return false;
   return CLINO_OUTPUT_PATTERNS.some((re) => re.test(t));
 }
 
@@ -720,6 +821,67 @@ export function isCodexTaskChrome(text: string): boolean {
   const t = stripPromptListPrefix(text);
   if (!t) return false;
   return CODEX_TASK_CHROME_PATTERNS.some((re) => re.test(t));
+}
+
+// ---------------------------------------------------------------------------
+// Claude Code skills/help/login chrome (not project memory)
+// ---------------------------------------------------------------------------
+
+const CLAUDE_TASK_CHROME_PATTERNS: RegExp[] = [
+  /^use whnbuilding\b/i,
+  /^use when (?:building|configuring|deploying|promoting|asked)\b/i,
+  /^use the url below to sign in\b/i,
+  /\buse this skill to configure the claue? code\b/i,
+  /\bupdate-?config\b.*\buse this skill\b/i,
+  /\badd-?di(?:r)?\b.*\b(?:add\s+)?a\s+new\s+working\s+director/i,
+  /\badd-?dir\b.*\b(?:add\s+)?a\s+new\s+working\s+director/i,
+  /\badd a new working directory\b/i,
+  /\b\/code-review\b.*\bcorrectness bugs\b/i,
+  /\bcode-review\b.*\breviw\b.*\bcorrectness bugs\b/i,
+  /\breview the current diff for correctness bugs\b/i,
+  /\bfind and fix bugs in your branch\b/i,
+  /\bidentifies bugs in your branch\b/i,
+  /\befies bugs in your branch\b/i,
+  /\bremote control failed\b/i,
+  /\bplease run \/login\b/i,
+  /\bapi error:\s*401\b/i,
+  /\binvalid authentication credentials\b/i,
+  /\bslash commands\b/i,
+  /\bmulti-platform chat bots\b/i,
+  /\bmodel routing\b/i,
+];
+
+/** Strip Claude Code skills/menu/login chrome from a single line. */
+function redactClaudeTaskChromeLine(line: string): string {
+  return line
+    .replace(/^use whnbuilding[^\n]*/gim, '')
+    .replace(/^use when (?:building|configuring|deploying|promoting|asked)[^\n]*/gim, '')
+    .replace(/^use the url below to sign in[^\n]*/gim, '')
+    .replace(/\bupdate-?config\b[^\n]*/gi, '')
+    .replace(/\badd-?di(?:r)?\b[^\n]*/gi, '')
+    .replace(/\b\/code-review\b[^\n]*/gi, '')
+    .replace(/\bremote control failed[^\n]*/gi, '')
+    .replace(/\bplease run \/login[^\n]*/gi, '')
+    .replace(/\bapi error:\s*401[^\n]*/gi, '')
+    .replace(/[ \t]{2,}/g, ' ')
+    .trim();
+}
+
+/** Strip Claude Code chrome line-by-line so transcript newlines stay intact. */
+function redactClaudeTaskChrome(text: string): string {
+  return text
+    .split('\n')
+    .map((line) => redactClaudeTaskChromeLine(line))
+    .join('\n');
+}
+
+/** Whether text contains Claude Code UI/help/login chrome rather than project content. */
+export function isClaudeTaskChrome(text: string): boolean {
+  const t = stripPromptListPrefix(text);
+  if (!t) return false;
+  if (/^bug:\s+/i.test(t)) return false;
+  if (/^todo:\s+/i.test(t) && /\bclino\b/i.test(t)) return false;
+  return CLAUDE_TASK_CHROME_PATTERNS.some((re) => re.test(t)) || isClaudeIntroChunk(t);
 }
 
 // ---------------------------------------------------------------------------
@@ -913,7 +1075,7 @@ const LEAD_INS: RegExp[] = [
 export function repairMemoryText(raw: string): string {
   if (!raw) return '';
   let t = cleanTranscriptForExtraction(raw).replace(/\r/g, '').replace(/\s+/g, ' ').trim();
-  t = redactCodexTaskChromeLine(t);
+  t = redactClaudeTaskChromeLine(redactCodexTaskChromeLine(t));
   if (!t || isTerminalUiLine(t)) return '';
   // Drop a transcript-metadata label ("**Arguments:**", "Command:", …) if the
   // fragment slipped through with one attached, then keep repairing the content.
@@ -993,9 +1155,11 @@ export function isQualityMemory(text: string, type: MemoryType): boolean {
   const core = text.trim().replace(/^[-*+•]\s+/, '').replace(/[.!?]+$/, '').trim();
   if (!core) return false;
   if (isTerminalUiLine(core) || isAgentProcessNarration(core)) return false;
-  if (isCodexAuthNoise(core) || isDiffOrCodeNoise(core)) return false;
+  if (isCodexAuthNoise(core) || isClaudeAuthNoise(core) || isDiffOrCodeNoise(core)) return false;
   if (isClinoOutputNoise(core) || isPromptSpecDirective(core) || isPromptRequestDirective(core)) return false;
-  if (isCodexTaskChrome(core) || isReviewAnalysisSummary(core) || isSessionStatusNoise(core)) return false;
+  if (isCodexTaskChrome(core) || isClaudeTaskChrome(core) || isReviewAnalysisSummary(core) || isSessionStatusNoise(core)) {
+    return false;
+  }
   if (type === 'bugs' && !hasConcreteBugSignal(core.toLowerCase())) return false;
 
   // Forbidden starts (defense in depth — repair should already remove these).
@@ -1177,9 +1341,27 @@ function isAgentProcessNarration(sentence: string): boolean {
 }
 
 function hasConcreteBugSignal(t: string): boolean {
-  if (isReviewAnalysisSummary(t) || isCodexTaskChrome(t)) return false;
+  if (isReviewAnalysisSummary(t) || isCodexTaskChrome(t) || isClaudeTaskChrome(t)) return false;
   if (/\bfind and fix a bug\b/.test(t)) return false;
+  if (/\/code-review\b/.test(t)) return false;
+  if (/\breview the current diff for correctness bugs\b/.test(t)) return false;
+  if (/\bfind and fix bugs in your branch\b/.test(t)) return false;
+  if (/\bidentifies bugs in your branch\b/.test(t)) return false;
+  if (/\befies bugs in your branch\b/.test(t)) return false;
+  const compact = compactForUiMatch(t);
+  if (
+    compact.includes('efiesbugsinyourbranch') ||
+    compact.includes('codereviewreviewthecurrentdiff') ||
+    compact.includes('codereviewreviwthcurrentdiff') ||
+    compact.includes('reviwthcurrentdiffforcorrectnessbugs') ||
+    compact.includes('usewhnbuildingmultiplatform')
+  ) {
+    return false;
+  }
   if (/^bug:\s+/.test(t)) return true;
+  if (/\bclino\b/.test(t) && /\b(?:accepts|shows?|writes?)\b.*\b(?:memory|open|chrome|login|ui|filtering)\b/.test(t)) {
+    return true;
+  }
   if (/\bshows?\s+.*\b(?:as\s+open|resolved\s+\S+\s+issue)\b/.test(t)) return true;
   if (/\bwrites?\s+memory\s+before\b/.test(t)) return true;
   if (/\bbugs?\b/.test(t) || /^(bugs?)\s*:/.test(t)) return true;
@@ -1218,7 +1400,13 @@ export function classifySentence(sentence: string): MemoryType | null {
     return 'resolved';
   }
 
-  if (isPromptRequestDirective(plain) || isCodexTaskChrome(plain) || isReviewAnalysisSummary(plain)) {
+  if (
+    isPromptRequestDirective(plain) ||
+    isCodexTaskChrome(plain) ||
+    isClaudeTaskChrome(plain) ||
+    isClaudeAuthNoise(plain) ||
+    isReviewAnalysisSummary(plain)
+  ) {
     return null;
   }
 
@@ -1269,12 +1457,15 @@ export function extractSignals(content: string): ExtractedSignals {
 
   for (const sentence of sentences) {
     if (isAgentProcessNarration(sentence)) continue;
-    if (isCodexAuthNoise(sentence) || isDiffOrCodeNoise(sentence)) continue;
+    if (isCodexAuthNoise(sentence) || isClaudeAuthNoise(sentence) || isDiffOrCodeNoise(sentence)) {
+      continue;
+    }
     if (
       isClinoOutputNoise(sentence) ||
       isPromptSpecDirective(sentence) ||
       isPromptRequestDirective(sentence) ||
       isCodexTaskChrome(sentence) ||
+      isClaudeTaskChrome(sentence) ||
       isReviewAnalysisSummary(sentence) ||
       isSessionStatusNoise(sentence)
     ) {
@@ -1303,7 +1494,13 @@ export function extractSignals(content: string): ExtractedSignals {
 export function isSuspiciousCandidate(text: string, type: MemoryType | 'summaries'): boolean {
   const core = text.trim();
   if (!core) return true;
-  if (isPromptRequestDirective(core) || isCodexTaskChrome(core) || isReviewAnalysisSummary(core)) {
+  if (
+    isPromptRequestDirective(core) ||
+    isCodexTaskChrome(core) ||
+    isClaudeTaskChrome(core) ||
+    isClaudeAuthNoise(core) ||
+    isReviewAnalysisSummary(core)
+  ) {
     return true;
   }
   if (/\b(identify the top|top 3|smallest (?:next )?fix|do not edit files?)\b/i.test(core)) {
@@ -1437,6 +1634,10 @@ const TOPIC_STOP = new Set([
   // TUI/menu words from Codex/Claude chrome.
   'tip', 'new', 'fast', 'select', 'model', 'effort', 'openai', 'codex',
   'directory', 'legacy', 'models',
+  // Claude Code skills/help/login UI — must not surface as summary focus areas.
+  'building', 'multi', 'platform', 'chat', 'bots', 'configuring', 'deploying',
+  'promoting', 'login', 'remote', 'control', 'failed', 'credentials', 'skills',
+  'commands', 'working', 'whnbuilding', 'reviw', 'correctness', 'diff',
 ]);
 
 function isJunkTopicToken(word: string): boolean {

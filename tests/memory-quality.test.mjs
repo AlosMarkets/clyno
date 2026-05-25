@@ -16,6 +16,8 @@ import {
   isClinoOutputNoise,
   isPromptRequestDirective,
   isCodexTaskChrome,
+  isClaudeTaskChrome,
+  isClaudeAuthNoise,
   isReviewAnalysisSummary,
   isSuspiciousCandidate,
   memoryResolvesItem,
@@ -980,4 +982,75 @@ test('summary focus areas omit review filler terms', () => {
       assert.doesNotMatch(summary, new RegExp(`Focus areas:.*\\b${junk}\\b`));
     }
   }
+});
+
+// --------------------------------------------------------------------------
+// 9. Claude Code UI/login/skills chrome (dogfood regression)
+// --------------------------------------------------------------------------
+test('extract: Claude Code login/skills/help UI yields zero memories', () => {
+  const claudeUi = [
+    'Use when building multi-platform chat bots',
+    'Use when configuring model routing, provide',
+    'Use when deploying, promoting, ro',
+    'Use the url below to sign in (c to copy)',
+    'Use when asked to run, star',
+    'Update-config Use this skill to configure the Claue Code',
+    'Add-di Ad anew workingdirectory',
+    'Efies bugs in your branch',
+    '/code-review Review the current diff for correctness bugs',
+    '● Remote Control failed to connect: /login',
+    'Remote Control failed · /login',
+    'Please run /login · API Error: 401 Invalid authentication credentials',
+  ].join('\n');
+
+  const s = extractSignals(claudeUi);
+  assert.deepEqual(s.decisions, []);
+  assert.deepEqual(s.todos, []);
+  assert.deepEqual(s.bugs, []);
+  assert.deepEqual(s.errors, []);
+  assert.deepEqual(s.resolved, []);
+  assert.equal(synthesizeSummary(s), '');
+});
+
+test('extract: compacted Claude Code UI blob yields zero memories', () => {
+  const compact =
+    'UsewhenbuildingmultiplatformchatbotsUsetheurlbelowtosigninUpdateconfigUsethisskilltoconfiguretheClaueCodeRemoteControlfailedloginAPIError401Invalidauthenticationcredentials';
+  const s = extractSignals(compact);
+  for (const list of Object.values(s)) assert.deepEqual(list, []);
+  assert.equal(synthesizeSummary(s), '');
+});
+
+test('extract: real project bug/todo/error survive Claude UI filtering', () => {
+  assert.deepEqual(
+    extractSignals('Bug: clino review accepts Claude login UI as memory.').bugs,
+    ['Clino review accepts Claude login UI as memory.'],
+  );
+  const npm = extractSignals('npm test failed with exit code 1.');
+  assert.equal(npm.errors.length + npm.bugs.length, 1);
+  assert.deepEqual(
+    extractSignals('TODO: add Claude Code UI filtering.').todos,
+    ['Add Claude Code UI filtering.'],
+  );
+});
+
+test('claude auth noise is never stored as errors', () => {
+  assert.equal(
+    isClaudeAuthNoise('Please run /login · API Error: 401 Invalid authentication credentials'),
+    true,
+  );
+  assert.equal(isClaudeAuthNoise('npm test failed with exit code 1.'), false);
+  assert.equal(isClaudeTaskChrome('Use when building multi-platform chat bots'), true);
+  assert.equal(isClaudeTaskChrome('Bug: clino review accepts Claude login UI as memory.'), false);
+  assert.equal(isClaudeTaskChrome('TODO: add Claude Code UI filtering.'), false);
+});
+
+test('summary focus areas omit Claude Code UI terms', () => {
+  const claudeUi = [
+    'Use when building multi-platform chat bots',
+    'Use when configuring model routing, provide',
+    'Remote Control failed · /login',
+  ].join('\n');
+  const s = extractSignals(claudeUi);
+  const summary = synthesizeSummary(s);
+  assert.equal(summary, '');
 });
