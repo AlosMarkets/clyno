@@ -18,6 +18,7 @@ import {
   isCodexTaskChrome,
   isClaudeTaskChrome,
   isClaudeAuthNoise,
+  isCursorTaskChrome,
   isReviewAnalysisSummary,
   isSuspiciousCandidate,
   memoryResolvesItem,
@@ -1053,4 +1054,126 @@ test('summary focus areas omit Claude Code UI terms', () => {
   const s = extractSignals(claudeUi);
   const summary = synthesizeSummary(s);
   assert.equal(summary, '');
+});
+
+// --------------------------------------------------------------------------
+// 13. Cursor Agent TUI/chrome rejection (dogfood regression)
+// --------------------------------------------------------------------------
+
+test('cursor chrome: cleaned transcript is empty for Cursor Agent UI noise', () => {
+  const bad = [
+    'Cursor Agent',
+    'v2026.05.24-dda726e',
+    'Use /mcp to connect Cursor to your tools and data sources.',
+    '▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄',
+    '→ Plan, search, build anything',
+    '▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀',
+    'Auto Auto-run',
+    '~/Desktop/clino · master',
+    '⠘⠆ Working',
+    '→ Add a follow-up ctrl+c to stop',
+  ].join('\n');
+
+  const cleaned = cleanTranscriptForExtraction(bad);
+  assert.equal(cleaned.trim(), '');
+
+  const signals = extractSignals(bad);
+  assert.deepEqual(signals.decisions, []);
+  assert.deepEqual(signals.todos, []);
+  assert.deepEqual(signals.bugs, []);
+  assert.deepEqual(signals.errors, []);
+  assert.deepEqual(signals.resolved, []);
+
+  const summary = synthesizeSummary(signals);
+  assert.equal(summary, '');
+});
+
+test('cursor chrome: real project memory survives adjacent cursor UI noise', () => {
+  const transcript = [
+    'Cursor Agent',
+    'v2026.05.24-dda726e',
+    'Use /mcp to connect Cursor to your tools and data sources.',
+    'We decided to use project-local .clino storage.',
+    '▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄',
+    'Need to add clino status command.',
+  ].join('\n');
+
+  const signals = extractSignals(transcript);
+  assert.deepEqual(signals.decisions, ['Use project-local .clino storage.']);
+  assert.deepEqual(signals.todos, ['Add clino status command.']);
+  for (const list of [signals.bugs, signals.errors, signals.resolved]) assert.deepEqual(list, []);
+});
+
+test('cursor chrome: isCursorTaskChrome detects MCP/connect phrases', () => {
+  assert.equal(isCursorTaskChrome('Use /mcp to connect Cursor to your tools and data sources.'), true);
+  assert.equal(isCursorTaskChrome('/mcp setup'), true);
+  assert.equal(isCursorTaskChrome('Use project-local .clino storage.'), false);
+  assert.equal(isCursorTaskChrome('Need to add clino status command.'), false);
+});
+
+test('cursor chrome: prompt template placeholders are dropped', () => {
+  const transcript = [
+    'CLINO_MEMORY:',
+    'Decision: ...',
+    'TODO: ...',
+    'Bug: ...',
+    'Resolved: ...',
+    'Only include concrete long-term project memory. Do not include general commentary.',
+    '',
+    'Decision: Use project-local .clino storage.',
+    'TODO: Add manual memory review workflow.',
+  ].join('\n');
+
+  const cleaned = cleanTranscriptForExtraction(transcript);
+  assert.doesNotMatch(cleaned, /CLINO_MEMORY/);
+  assert.doesNotMatch(cleaned, /Decision: \.\.\./);
+  assert.doesNotMatch(cleaned, /TODO: \.\.\./);
+  assert.doesNotMatch(cleaned, /Bug: \.\.\./);
+  assert.doesNotMatch(cleaned, /Resolved: \.\.\./);
+  assert.doesNotMatch(cleaned, /Only include concrete/);
+
+  // Real memories must survive.
+  assert.match(cleaned, /Use project-local \.clino storage/);
+  assert.match(cleaned, /Add manual memory review workflow/);
+
+  const signals = extractSignals(transcript);
+  assert.deepEqual(signals.decisions, ['Use project-local .clino storage.']);
+  assert.deepEqual(signals.todos, ['Add manual memory review workflow.']);
+});
+
+test('cursor chrome: slash-command help is rejected as candidate', () => {
+  // These should produce zero memories.
+  const slashCommands = [
+    '/mcp Use /mcp to connect Cursor to your tools and data sources.',
+    '/finishing-a-development-branch Use when implementation is complete, all tests pass, and you need to….',
+  ].join('\n');
+  const s1 = extractSignals(slashCommands);
+  for (const list of Object.values(s1)) assert.deepEqual(list, []);
+
+  // Normal "use" sentences must NOT be rejected.
+  assert.equal(isQualityMemory('Use PTY/terminal I/O only for agent integration.', 'decisions'), true);
+  assert.equal(isQualityMemory('Use markdown memory files for MVP storage.', 'decisions'), true);
+  assert.equal(isQualityMemory('Use project-local .clino storage.', 'decisions'), true);
+});
+
+test('cursor chrome: spinner contamination is repaired', () => {
+  const repaired = repairMemoryText(
+    'Default clino inject limits are 8 items and 6000 characters; ranking prefers exact matches, ⠘⠆ Working 11k tokens.',
+  );
+  // Should be cleaned up — the spinner/token suffix removed.
+  assert.doesNotMatch(repaired, /Working/);
+  assert.doesNotMatch(repaired, /⠘⠆/);
+  assert.doesNotMatch(repaired, /tokens/);
+  // Core content preserved.
+  assert.match(repaired, /Default clino inject limits/);
+  assert.match(repaired, /ranking prefers exact matches/);
+});
+
+test('cursor chrome: compact Cursor UI blob yields no memories', () => {
+  const compact =
+    'CursorAgentv20260524dda726eUseMCPtoconnectCursortoyourtoolsanddatasources' +
+    'PlanearchbuildanythingAutoAutorunWorking11ktokens';
+  const s = extractSignals(compact);
+  for (const list of Object.values(s)) assert.deepEqual(list, []);
+  assert.equal(synthesizeSummary(s), '');
 });

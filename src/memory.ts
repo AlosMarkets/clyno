@@ -107,6 +107,7 @@ function normalizeTranscriptLine(line: string): string {
     .replace(/[╭╮╰╯┌┐└┘├┤┬┴┼╔╗╚╝╠╣╦╩╬]/g, ' ')
     .replace(/[│║]/g, ' ')
     .replace(/[─━═]{3,}/g, ' ')
+    .replace(/[▄▀█]/g, ' ')          // block-drawing chars from Cursor TUI
     .replace(/\s+/g, ' ')
     .trim();
 }
@@ -117,7 +118,7 @@ function isTerminalUiLine(line: string): boolean {
     .replace(/^›\s*/, '')
     .trim();
   if (!t) return true;
-  if (/^[\s╭╮╰╯│║─━═┌┐└┘├┤┬┴┼]+$/.test(line)) return true;
+  if (/^[\s╭╮╰╯│║─━═┌┐└┘├┤┬┴┼▄▀█]+$/.test(line)) return true;
 
   return [
     /^openai codex\b/i,
@@ -158,6 +159,19 @@ function isTerminalUiLine(line: string): boolean {
     /\bidentifies bugs in your branch\b/i,
     /\bfind and fix bugs in your branch\b/i,
     /\breview the current diff for correctness bugs\b/i,
+    // Cursor Agent UI chrome.
+    /^cursor agent\b/i,
+    /^v\d{4}\.\d{2}\.\d{2}[-]/i,
+    /^use \/mcp to connect cursor\b/i,
+    /→\s*plan,?\s*search,?\s*build\b/i,
+    /auto autorun\b/i,
+    /^~\/\S+\s+·\s+\S+/,
+    /→\s*add a follow.up ctrl.c to stop/i,
+    /^⠘⠆\s*working\b/i,
+    // Slash-command help / skill descriptions (Cursor, Claude, Codex).
+    /^\/[a-z0-9][a-z0-9-]*\s+\w+/,
+    /^use when implementation is complete\b/i,
+    /^use this skill\b/i,
   ].some((re) => re.test(t));
 }
 
@@ -419,6 +433,71 @@ export function isClaudeAuthNoise(text: string): boolean {
   return CLAUDE_AUTH_REJECT_COMPACT_PATTERNS.some((p) => compact.includes(p));
 }
 
+// ---------------------------------------------------------------------------
+// Cursor Agent UI chrome rejection
+//
+// Cursor Agent TUI chrome (version lines, MCP prompt, block-drawing separators,
+// status/path lines, spinner artifacts). Same strategy: match on compact form
+// and drop wholesale before extraction.
+// ---------------------------------------------------------------------------
+
+const CURSOR_UI_COMPACT_PATTERNS = [
+  'cursoragent',
+  'usemcptoconnectcursortoyourtoolsanddatasources',
+  'planaearchbuildanything',
+  'plansearchbuildanything',
+  'autoautorun',
+  'addafollowupctrlctostop',
+];
+
+const CURSOR_AUTH_REJECT_COMPACT_PATTERNS = [
+  'cursoragent',
+  'usemcptoconnectcursortoyourtoolsanddatasources',
+];
+
+function isCursorIntroChunk(line: string): boolean {
+  const compact = compactForUiMatch(line);
+  if (!compact) return false;
+  if (CURSOR_UI_COMPACT_PATTERNS.some((p) => compact.includes(p))) return true;
+  if (isHighSymbolNoise(line) && /(cursor|mcp|autorun|ctrl\+c)/.test(compact)) return true;
+  return false;
+}
+
+/**
+ * Hard rejection for memory candidates: Cursor Agent UI chrome is never
+ * stored as project memory.
+ */
+export function isCursorAuthNoise(text: string): boolean {
+  const compact = compactForUiMatch(text);
+  if (!compact) return false;
+  return CURSOR_AUTH_REJECT_COMPACT_PATTERNS.some((p) => compact.includes(p));
+}
+
+// ---------------------------------------------------------------------------
+// Prompt template placeholder rejection
+//
+// User prompts often contain template lines like "Decision: ...", "TODO: ...",
+// "Bug: ...", "Resolved: ...", and "CLINO_MEMORY:" that the agent echoes back
+// verbatim before providing real content. These are scaffolding, not project
+// memories, and are dropped from the cleaned transcript.
+// ---------------------------------------------------------------------------
+
+/**
+ * Whether a line is an exact prompt template placeholder (three dots after a
+ * label, bare "CLINO_MEMORY:", or the "Only include" instruction).
+ *
+ * Safe:   "Decision: ..."  -> dropped
+ * Kept:   "Decision: Use project-local .clino storage."  -> kept (has content)
+ */
+function isPromptTemplatePlaceholder(line: string): boolean {
+  const t = line.trim();
+  if (!t) return false;
+  if (/^(Decision|TODO|Bug|Resolved):\s*\.\.\.\s*$/.test(t)) return true;
+  if (/^CLINO_MEMORY:\s*$/.test(t)) return true;
+  if (/^Only include concrete long-term project memory\.\s*Do not include general commentary\.$/.test(t)) return true;
+  return false;
+}
+
 export function cleanTranscriptForExtraction(raw: string): string {
   // Redact auth URLs before splitting so an embedded/compacted URL is removed in
   // full, then drop terminal-UI lines and whole Codex intro/login/auth blobs.
@@ -435,13 +514,15 @@ export function cleanTranscriptForExtraction(raw: string): string {
         !isTerminalUiLine(line) &&
         !isCodexIntroChunk(line) &&
         !isClaudeIntroChunk(line) &&
+        !isCursorIntroChunk(line) &&
         !isDiffOrCodeNoise(line) &&
         !isClinoOutputNoise(line) &&
         !isPromptSpecDirective(line) &&
         !isPromptRequestDirective(line) &&
         !isCodexTaskChrome(line) &&
         !isClaudeTaskChrome(line) &&
-        !isSessionStatusNoise(line),
+        !isSessionStatusNoise(line) &&
+        !isPromptTemplatePlaceholder(line),
     );
 
   // Block-level pass: strip pasted prompt/spec instruction blocks (headings plus
@@ -452,13 +533,15 @@ export function cleanTranscriptForExtraction(raw: string): string {
       !isTerminalUiLine(line) &&
       !isCodexIntroChunk(line) &&
       !isClaudeIntroChunk(line) &&
+      !isCursorIntroChunk(line) &&
       !isDiffOrCodeNoise(line) &&
       !isClinoOutputNoise(line) &&
       !isPromptSpecDirective(line) &&
       !isPromptRequestDirective(line) &&
       !isCodexTaskChrome(line) &&
       !isClaudeTaskChrome(line) &&
-      !isSessionStatusNoise(line),
+      !isSessionStatusNoise(line) &&
+      !isPromptTemplatePlaceholder(line),
   );
 
   // Final safety pass: scrub any residual OAuth/auth query tokens.
@@ -885,6 +968,40 @@ export function isClaudeTaskChrome(text: string): boolean {
 }
 
 // ---------------------------------------------------------------------------
+// Cursor Agent task/MCP chrome (not project memory)
+// ---------------------------------------------------------------------------
+
+const CURSOR_TASK_CHROME_PATTERNS: RegExp[] = [
+  /^use \/mcp\b/i,
+  /\buse \/mcp to connect cursor\b/i,
+  /\bconnect cursor to your tools and data sources\b/i,
+  /^\/mcp\b/i,
+];
+
+function redactCursorTaskChromeLine(line: string): string {
+  return line
+    .replace(/^use \/mcp to connect cursor[^\n]*/gim, '')
+    .replace(/^\/mcp[^\n]*/gim, '')
+    .replace(/[ \t]{2,}/g, ' ')
+    .trim();
+}
+
+function redactCursorTaskChrome(text: string): string {
+  return text
+    .split('\n')
+    .map((line) => redactCursorTaskChromeLine(line))
+    .join('\n');
+}
+
+/** Whether text contains Cursor Agent MCP/chrome rather than project content. */
+export function isCursorTaskChrome(text: string): boolean {
+  const t = stripPromptListPrefix(text);
+  if (!t) return false;
+  if (/^bug:\s+/i.test(t)) return false;
+  return CURSOR_TASK_CHROME_PATTERNS.some((re) => re.test(t)) || isCursorIntroChunk(t);
+}
+
+// ---------------------------------------------------------------------------
 // Review/analysis conclusions (not concrete bugs)
 // ---------------------------------------------------------------------------
 
@@ -1075,7 +1192,7 @@ const LEAD_INS: RegExp[] = [
 export function repairMemoryText(raw: string): string {
   if (!raw) return '';
   let t = cleanTranscriptForExtraction(raw).replace(/\r/g, '').replace(/\s+/g, ' ').trim();
-  t = redactClaudeTaskChromeLine(redactCodexTaskChromeLine(t));
+  t = redactCursorTaskChromeLine(redactClaudeTaskChromeLine(redactCodexTaskChromeLine(t)));
   if (!t || isTerminalUiLine(t)) return '';
   // Drop a transcript-metadata label ("**Arguments:**", "Command:", …) if the
   // fragment slipped through with one attached, then keep repairing the content.
@@ -1102,6 +1219,10 @@ export function repairMemoryText(raw: string): string {
   }
   t = t.trim();
   if (!t) return '';
+
+  // Strip trailing spinner / token contamination (braille glyphs + "Working").
+  t = t.replace(/[\s,;]*[\u2800-\u28FF]+\s*working\b(?:\s+\d+\s*k?\s*tokens?)?[.\s]*$/gi, '').trim();
+  t = t.replace(/\bworking\s+\d+\s*k?\s*tokens?\b[.\s]*$/gi, '').trim();
 
   // Capitalize the first character unless it opens with a code/command token.
   const firstTok = t.split(/\s+/)[0] || '';
@@ -1137,6 +1258,34 @@ function countMeaningfulWords(text: string): number {
 }
 
 /**
+ * Whether text is a slash-command help / skill description (not project memory).
+ * Rejects candidates starting with a slash command, or containing known skill
+ * description phrases.
+ *
+ * Safe (kept):
+ *   "Use PTY/terminal I/O only for agent integration."
+ *   "Use markdown memory files for MVP storage."
+ *   "Use project-local .clino storage."
+ *
+ * Rejected:
+ *   "/mcp Use /mcp to connect Cursor to your tools and data sources."
+ *   "/finishing-a-development-branch Use when implementation is complete..."
+ *   "Use when building multi-platform chat bots"
+ *   "Use this skill to configure the Claude Code"
+ *   "connect Cursor to your tools and data sources"
+ */
+function isSlashCommandHelp(text: string): boolean {
+  const t = text.trim();
+  if (!t) return false;
+  if (/^\/[a-z0-9][a-z0-9-]*(?:\s|$)/.test(t)) return true;
+  if (/\buse when implementation is complete\b/i.test(t)) return true;
+  if (/\buse when building\b/i.test(t)) return true;
+  if (/\buse this skill\b/i.test(t)) return true;
+  if (/\bconnect cursor to your tools and data sources\b/i.test(t)) return true;
+  return false;
+}
+
+/**
  * Reject low-quality memories. A memory is rejected when it:
  *   - opens with "to use" / "decided to use" / "we decided to use" / bare "to "
  *   - opens with a subordinating/coordinating conjunction (a dependent fragment,
@@ -1155,9 +1304,9 @@ export function isQualityMemory(text: string, type: MemoryType): boolean {
   const core = text.trim().replace(/^[-*+•]\s+/, '').replace(/[.!?]+$/, '').trim();
   if (!core) return false;
   if (isTerminalUiLine(core) || isAgentProcessNarration(core)) return false;
-  if (isCodexAuthNoise(core) || isClaudeAuthNoise(core) || isDiffOrCodeNoise(core)) return false;
+  if (isCodexAuthNoise(core) || isClaudeAuthNoise(core) || isCursorAuthNoise(core) || isDiffOrCodeNoise(core)) return false;
   if (isClinoOutputNoise(core) || isPromptSpecDirective(core) || isPromptRequestDirective(core)) return false;
-  if (isCodexTaskChrome(core) || isClaudeTaskChrome(core) || isReviewAnalysisSummary(core) || isSessionStatusNoise(core)) {
+  if (isCodexTaskChrome(core) || isClaudeTaskChrome(core) || isCursorTaskChrome(core) || isReviewAnalysisSummary(core) || isSessionStatusNoise(core)) {
     return false;
   }
   if (type === 'bugs' && !hasConcreteBugSignal(core.toLowerCase())) return false;
@@ -1170,6 +1319,8 @@ export function isQualityMemory(text: string, type: MemoryType): boolean {
   if (/^(because|which|that|so|since|although|though|whereas|but|and|or|nor|yet|if|when|while)\b/i.test(core)) {
     return false;
   }
+  // Slash-command help / skill descriptions (not project memory).
+  if (isSlashCommandHelp(core)) return false;
 
   const cmd = isCommandLike(core);
   const isErr = type === 'errors';
@@ -1404,7 +1555,9 @@ export function classifySentence(sentence: string): MemoryType | null {
     isPromptRequestDirective(plain) ||
     isCodexTaskChrome(plain) ||
     isClaudeTaskChrome(plain) ||
+    isCursorTaskChrome(plain) ||
     isClaudeAuthNoise(plain) ||
+    isCursorAuthNoise(plain) ||
     isReviewAnalysisSummary(plain)
   ) {
     return null;
@@ -1457,7 +1610,7 @@ export function extractSignals(content: string): ExtractedSignals {
 
   for (const sentence of sentences) {
     if (isAgentProcessNarration(sentence)) continue;
-    if (isCodexAuthNoise(sentence) || isClaudeAuthNoise(sentence) || isDiffOrCodeNoise(sentence)) {
+    if (isCodexAuthNoise(sentence) || isClaudeAuthNoise(sentence) || isCursorAuthNoise(sentence) || isDiffOrCodeNoise(sentence)) {
       continue;
     }
     if (
@@ -1466,6 +1619,7 @@ export function extractSignals(content: string): ExtractedSignals {
       isPromptRequestDirective(sentence) ||
       isCodexTaskChrome(sentence) ||
       isClaudeTaskChrome(sentence) ||
+      isCursorTaskChrome(sentence) ||
       isReviewAnalysisSummary(sentence) ||
       isSessionStatusNoise(sentence)
     ) {
@@ -1498,11 +1652,13 @@ export function isSuspiciousCandidate(text: string, type: MemoryType | 'summarie
     isPromptRequestDirective(core) ||
     isCodexTaskChrome(core) ||
     isClaudeTaskChrome(core) ||
+    isCursorTaskChrome(core) ||
     isClaudeAuthNoise(core) ||
     isReviewAnalysisSummary(core)
   ) {
     return true;
   }
+  if (isSlashCommandHelp(core)) return true;
   if (/\b(identify the top|top 3|smallest (?:next )?fix|do not edit files?)\b/i.test(core)) {
     return true;
   }
