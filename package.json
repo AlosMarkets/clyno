@@ -1,5 +1,5 @@
 {
-  "name": "clyno",
+  "name": "@clyno/cli",
   "version": "0.1.0",
   "description": "Persistent memory for AI coding agents",
   "main": "dist/index.js",
