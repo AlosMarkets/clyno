@@ -27,8 +27,16 @@
     "coding-agent",
     "memory",
     "context",
+    "context-engineering",
+    "local-first",
+    "cli",
+    "terminal",
+    "llm",
+    "agent-memory",
     "codex",
-    "claude-code"
+    "claude-code",
+    "aider",
+    "goose"
   ],
   "author": "Clyno Contributors",
   "license": "MIT",

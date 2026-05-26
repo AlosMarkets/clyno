@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-05-26
+
+First public release, published to npm as [`@clyno/cli`](https://www.npmjs.com/package/@clyno/cli).
+Install with `npm install -g @clyno/cli`; the command remains `clyno`.
+
 ### Added
 
 - Rule-based secret redaction: obvious API keys, tokens, JWTs, PEM private-key
@@ -22,3 +27,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Resolved-memory tracking to avoid re-surfacing handled items.
 - Memory management commands: `clyno memory list`, `clyno memory show`,
   and `clyno memory delete`.
+
+[Unreleased]: https://github.com/AlosMarkets/clyno/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/AlosMarkets/clyno/releases/tag/v0.1.0

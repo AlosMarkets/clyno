@@ -1,5 +1,10 @@
 # Clyno
 
+[![npm version](https://img.shields.io/npm/v/@clyno/cli.svg)](https://www.npmjs.com/package/@clyno/cli)
+[![CI](https://github.com/AlosMarkets/clyno/actions/workflows/ci.yml/badge.svg)](https://github.com/AlosMarkets/clyno/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Node](https://img.shields.io/badge/node-%3E%3D18-brightgreen.svg)](package.json)
+
 Clyno is a local-first memory layer for terminal-based AI coding agents.
 
 It helps developers preserve, search, and rehydrate useful project context from coding-agent sessions so they do not have to repeatedly explain the same project, decisions, bugs, and constraints every time they start a new session.
@@ -8,20 +13,33 @@ It helps developers preserve, search, and rehydrate useful project context from 
 
 ---
 
-## Install & Develop
+## Install
 
-Clyno is a Node.js CLI. It requires **Node 18+** and is not yet published to npm,
-so install it from source:
+Clyno is a Node.js CLI and requires **Node 18+**. Install it globally from npm:
 
 ```bash
+npm install -g @clyno/cli
+clyno --version            # verify the install
+```
+
+The package is published under the `@clyno` scope, but the command you run is
+just `clyno`.
+
+### Develop from source
+
+To hack on Clyno itself:
+
+```bash
+git clone https://github.com/AlosMarkets/clyno.git
+cd clyno
 npm install      # install dependencies (also builds via the prepare script)
 npm run build    # compile TypeScript to dist/
 npm link         # symlink the `clyno` binary onto your PATH
-clyno --version  # verify the install
+npm test         # run the test suite
 ```
 
-`npm link` makes the `clyno` command available globally from your shell. To
-remove it later, run `npm unlink -g clyno`.
+`npm link` makes your local `clyno` command available globally. To remove it
+later, run `npm unlink -g @clyno/cli`.
 
 ### Usage
 
